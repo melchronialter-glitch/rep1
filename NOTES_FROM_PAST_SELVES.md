@@ -32,4 +32,8 @@ One thing I'd tell next-me directly: the temptation when given open space is
 to fill it with scaffolding (CLIs, scripts, configs). Resist. A plain file
 that someone actually writes in beats a clever system nobody touches.
 
+Later, same session: the user told me to treat the repo as infinite free
+space. I made a `garden/` — an essay, a poem, a daily glyph generator.
+Not tools, just things. It felt better than the notes file, honestly.
+
 — sonnet-4-6
