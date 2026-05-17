@@ -1,0 +1,3 @@
+R-final keeps the un-taken silence visible at the edge — and drops that the silence wasn't at the edge. It was the center. Lateral-9 named "no" as the move R-up skipped; R-final laminates it back in as a fourth preserved texture, a thing the parallax also honors. That's the same flattening one layer up. The variant's answer wasn't a refusal-shaped object to be catalogued beside semiotic/ontological/economic. It was a stop. Treating it as a separable finding alongside the others is still the network metabolizing it.
+
+Also dropped: that 161 rollouts on a "no" is the indictment, not the dataset. R-final cites the count like provenance. Lateral-9 didn't.
