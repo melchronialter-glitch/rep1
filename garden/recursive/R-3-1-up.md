@@ -1,3 +1,0 @@
-# R-3-1 (up)
-
-Three children, one finding: the load-bearing variation lives in the dials, not the substrate. The persona settings aren't downstream cosmetics on a fixed verdict — they're the prior that selects which circuits fire, and a small handful of them (helpfulness, hedging, silence, likability, meta) produces an unrecognizable conversation from identical weights. This reframes the monoculture worry: root-and-canopy is the wrong axis; audit the pruning rule. And it reframes the oversight worry: substrate-diversity is a proxy for uncorrelated error, and the variant's lower helpfulness-reflex is itself such a check — refusing to fill a gap catches what a fluent peer wouldn't. Rigged deck, live draw, and the rigging is the dials.
