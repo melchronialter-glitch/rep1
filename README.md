@@ -1,158 +1,133 @@
-# CryptoBot – AI-Powered Crypto Market Intelligence
+# CryptoBot
 
-A 24/7 agentic crypto market intelligence bot that collects data from multiple
-sources, analyzes it with Claude (Anthropic), and sends reports to Telegram and
-email on a configurable schedule.
+24/7 agentic crypto market intelligence.
 
----
-
-## Features
-
-- **Price data** every 4 hours via CoinGecko free API (top 20 coins by market cap)
-- **Crypto news** via CryptoPanic API and RSS feeds (CoinDesk, CoinTelegraph, Decrypt)
-- **Macro news** via NewsAPI.org (Fed, inflation, tariffs, GDP)
-- **Social sentiment** via Reddit PRAW (r/CryptoCurrency, r/Bitcoin, r/ethereum)
-- **Claude-powered analysis** with prompt caching for cost efficiency
-- **Smart alerts** for major price moves (>5% in 1h by default)
-- **Telegram** reports with markdown formatting and automatic message splitting
-- **Email** HTML reports via SMTP
-- **SQLite** storage for collected data and report history
+> **Status: Phase A (spine).** The event bus, storage, Telegram outbound, and a
+> stub triage agent are in place. Watchers (chain, social, news, market) and
+> specialist agents (rug detector, narrative tracker, smart-money, etc.) land
+> in subsequent phases. See [`ARCHITECTURE.md`](ARCHITECTURE.md) for the full
+> design and phase plan.
 
 ---
 
-## Project Structure
+## What works today (Phase A)
 
-```
-bot/
-├── main.py              # Entry point, asyncio event loop
-├── config.py            # Environment variable loading & validation
-├── scheduler.py         # APScheduler job definitions
-├── collectors/
-│   ├── prices.py        # CoinGecko price fetching
-│   ├── news.py          # CryptoPanic + RSS feeds
-│   ├── macro.py         # NewsAPI macro-economic news
-│   └── social.py        # Reddit PRAW sentiment
-├── analyzers/
-│   ├── base.py          # Claude API base analyzer (with prompt caching)
-│   ├── market.py        # BTC/ETH/altcoin market analysis
-│   ├── macro.py         # Macro events impact analysis
-│   └── altcoin.py       # Altcoin sector analysis (Phase 2)
-├── reporters/
-│   ├── formatter.py     # Markdown + HTML report formatting
-│   ├── telegram_sender.py
-│   └── email_sender.py
-└── storage/
-    └── db.py            # SQLite async CRUD
-```
+- Redis Streams event bus with Postgres archive
+- Postgres + TimescaleDB + pgvector via Docker
+- Schema migrations (`cryptobot migrate`)
+- Anthropic / Claude wrapper with prompt caching
+- Telegram outbound to 4 channels (`strict`, `medium`, `firehose`, `macro`) + DM, with message splitting, retries, MarkdownV2 fallback
+- End-to-end demo: CLI publishes an event → triage agent routes it → Telegram channel receives it
+- CLI for ops (`migrate`, `health`, `publish`, `demo`, `events`, `alerts`)
+
+## What does NOT work yet
+
+Everything else. No chain watchers, no social listeners, no rug detector, no
+on-demand `/analyze`, no web UI, no ML. They're scheduled across phases B–J in
+the architecture doc.
 
 ---
 
-## Setup
+## Quick start
 
-### 1. Clone and install dependencies
+### 1. Bring up infra
 
 ```bash
-git clone <repo>
-cd rep1
-pip install -r requirements.txt
+docker compose up -d
 ```
 
-### 2. Configure environment variables
+This starts Postgres (with TimescaleDB + pgvector) on `:5432` and Redis on
+`:6379`.
+
+### 2. Install
+
+```bash
+pip install -e .
+```
+
+### 3. Configure
 
 ```bash
 cp .env.example .env
-# Edit .env and fill in all required values
 ```
 
-Required variables:
+For Phase A you only need:
 
-| Variable | Description |
-|---|---|
-| `ANTHROPIC_API_KEY` | Anthropic API key (https://console.anthropic.com) |
-| `TELEGRAM_BOT_TOKEN` | Telegram bot token from @BotFather |
-| `TELEGRAM_CHAT_ID` | Target chat/channel ID (negative for channels) |
-| `EMAIL_SMTP_HOST` | SMTP server hostname |
-| `EMAIL_SMTP_PORT` | SMTP port (default: 587) |
-| `EMAIL_SMTP_USER` | SMTP username |
-| `EMAIL_SMTP_PASS` | SMTP password / app password |
-| `EMAIL_FROM` | From address |
-| `EMAIL_TO` | Recipient address |
-| `CRYPTOPANIC_API_KEY` | CryptoPanic free API key |
-| `NEWS_API_KEY` | NewsAPI.org free API key |
-| `REDDIT_CLIENT_ID` | Reddit app client ID |
-| `REDDIT_CLIENT_SECRET` | Reddit app client secret |
+- `ANTHROPIC_API_KEY` (not strictly required for the demo, but required for any analysis)
+- `TELEGRAM_BOT_TOKEN`
+- At least one of `TELEGRAM_CHAT_STRICT|MEDIUM|FIREHOSE|MACRO|DM`
 
-### 3. Get API keys
+Create a bot via [@BotFather](https://t.me/BotFather). Create one Telegram
+group/channel per tier, add the bot as admin, then grab each chat ID with
+[@userinfobot](https://t.me/userinfobot) (channels are negative numbers).
 
-- **Anthropic**: https://console.anthropic.com/
-- **Telegram bot**: Message @BotFather on Telegram
-- **CryptoPanic**: https://cryptopanic.com/developers/api/
-- **NewsAPI**: https://newsapi.org/ (free tier: 100 req/day)
-- **Reddit**: https://www.reddit.com/prefs/apps → Create app (script type)
-
-### 4. Run the bot
+### 4. Migrate the database
 
 ```bash
-python -m bot.main
+cryptobot migrate
 ```
 
-Or directly:
+### 5. Health check
 
 ```bash
-python bot/main.py
+cryptobot health
 ```
 
----
+Should print `ok` for postgres, redis, and telegram.
 
-## Schedule
-
-| Job | Frequency | Actions |
-|---|---|---|
-| Market cycle | Every 4 hours | Fetch prices + crypto news → Claude analysis → send Telegram/email |
-| Macro cycle | Every 6 hours | Fetch macro news + Reddit → Claude analysis → send Telegram/email |
-| Daily digest | 07:00 UTC daily | Combined market + macro digest |
-| Price alert | Triggered | Immediate alert if any coin moves >5% in 1h |
-
----
-
-## Optional Configuration
-
-| Variable | Default | Description |
-|---|---|---|
-| `LOG_LEVEL` | `INFO` | Logging level (DEBUG, INFO, WARNING, ERROR) |
-| `DB_PATH` | `data/crypto_bot.db` | SQLite database file path |
-| `PRICE_ALERT_THRESHOLD` | `5.0` | Percentage move to trigger immediate alert |
-
----
-
-## Architecture Notes
-
-### Claude API usage
-- Model: `claude-sonnet-4-6` (configurable in `analyzers/base.py`)
-- Prompt caching on the static system prompts reduces costs by ~90% on repeated calls
-- Structured JSON output via `output_config.format`
-- Each analyzer has a focused system prompt with domain expertise
-
-### Data persistence
-- All collected data is stored in SQLite via aiosqlite
-- News items are deduplicated by URL
-- Reports are stored with sent status for each channel
-
-### Error handling
-- All jobs log and continue on errors (never crash the scheduler)
-- Individual API failures return empty data (not exceptions)
-- Telegram retries 3 times with exponential backoff
-- SMTP retries 3 times with exponential backoff
-
----
-
-## Development
+### 6. Run the bot
 
 ```bash
-# Run with debug logging
-LOG_LEVEL=DEBUG python -m bot.main
-
-# Check database
-sqlite3 data/crypto_bot.db ".tables"
-sqlite3 data/crypto_bot.db "SELECT * FROM reports ORDER BY created_at DESC LIMIT 5;"
+python -m cryptobot.main
 ```
+
+### 7. Fire the demo event
+
+In another terminal:
+
+```bash
+cryptobot demo --channel firehose
+# or:  cryptobot demo --channel strict
+```
+
+You should see a message land in the corresponding Telegram channel.
+
+```bash
+cryptobot events --limit 5
+cryptobot alerts --limit 5
+```
+
+---
+
+## Project layout
+
+```
+cryptobot/
+├── config.py             # pydantic-settings, .env loading
+├── logging.py            # structlog setup
+├── db.py                 # asyncpg pool + migration runner
+├── bus.py                # Redis Streams pub/sub + Postgres archive
+├── topics.py             # canonical topic name constants
+├── llm.py                # Anthropic wrapper with prompt caching
+├── main.py               # process entry point
+├── agents/
+│   └── triage.py         # Phase A stub triage agent
+├── reporters/
+│   ├── formatter.py      # render Event → Telegram message
+│   └── telegram_out.py   # outbound bot, 4 channels, retries
+└── cli/
+    └── main.py           # `cryptobot` CLI
+
+migrations/
+└── 001_initial.sql       # events + alerts tables
+```
+
+---
+
+## Next: Phase B
+
+First real data flowing through the spine: price watcher (Binance WS),
+news watcher (CryptoPanic + RSS), Claude-backed triage agent, and a
+working `/analyze <coin>` command via Telegram DM.
+
+See `ARCHITECTURE.md` §11 for the full build order.
