@@ -21,6 +21,7 @@ from cryptobot.db import close_pool, get_pool, run_migrations
 from cryptobot.logging import get_logger
 from cryptobot.reporters.telegram_in import run_telegram_in
 from cryptobot.reporters.telegram_out import run_alert_sender
+from cryptobot.watchers.macro_news import run_macro_news_watcher
 from cryptobot.watchers.news import run_news_watcher
 from cryptobot.watchers.prices import run_price_watcher
 
@@ -68,6 +69,7 @@ async def amain() -> None:
     runners: list[tuple[str, Callable[[asyncio.Event], Awaitable[None]]]] = [
         ("price_watcher", run_price_watcher),
         ("news_watcher", run_news_watcher),
+        ("macro_news_watcher", run_macro_news_watcher),
         ("triage", run_triage),
         ("coin_analyst", run_coin_analyst),
         ("digest", run_digest),
