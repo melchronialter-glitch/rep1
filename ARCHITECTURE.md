@@ -96,6 +96,11 @@ intel.rug_confirmed                           # auto or manual rug label
 | `econ_calendar_watcher` | Trading-economics / investing.com scrape | `news.macro.high_impact` | scheduled events with countdown |
 | `price_watcher` | Binance WS + CoinGecko | `market.price_move.*`, `market.volume_spike.*` | |
 | `derivatives_watcher` | Coinglass / Binance futures | `market.funding_anomaly.*`, `market.liquidation_cluster.*` | |
+| `indicator_engine` | computed from `prices_ts` OHLCV | `market.indicator_signal.{symbol}` | RSI, MACD, EMA crosses, Bollinger touches, volume profile — buy/sell signal candidates |
+| `orderbook_watcher` | Binance depth WS | `market.orderbook_imbalance.{symbol}` | bid/ask wall detection, depth imbalance |
+| `sentiment_index_watcher` | Fear & Greed (alternative.me), DXY/SPX/gold via free quotes | `market.sentiment_shift` | macro-correlation context for analysis |
+| `launch_radar_watcher` | ICO/IDO calendars, vesting unlock trackers (token.unlocks-style scrape, CryptoRank/ICODrops) | `chain.upcoming_launch`, `chain.vesting_unlock` | presales, fair launches, vesting cliffs, private-round unlock schedules |
+| `dev_activity_watcher` | GitHub API (free) | `social.dev_activity` | commit cadence on tracked project repos — real-project signal |
 
 ---
 
@@ -393,6 +398,7 @@ We build in phases. Each phase ends with something **runnable and useful**.
 2. EVM: Alchemy WS for new pair events
 3. BSC: similar
 4. `chain.new_pair.*` flows; `firehose` channel goes live
+5. `launch_radar_watcher`: presales, fair-launch calendars, vesting unlock schedules
 
 **End state**: every new launch on every chain visible in firehose, with basic enrichment.
 
@@ -418,13 +424,17 @@ We build in phases. Each phase ends with something **runnable and useful**.
 1. `smart_money_agent` with dynamic watchlist
 2. `narrative_tracker_agent` with embeddings
 3. `whale_watcher` + `chain.whale_move`
+4. `dev_activity_watcher` (GitHub commit cadence on tracked projects)
 
 **End state**: agentic discovery working — bot finds whales and narratives on its own.
 
-### Phase G — Macro + derivatives
+### Phase G — Macro, derivatives + technical indicators
 1. `econ_calendar_watcher`
 2. `derivatives_watcher` (Coinglass)
 3. `macro_impact_agent`
+4. `indicator_engine`: RSI, MACD, EMA crosses, Bollinger, volume profile computed from stored OHLCV → buy/sell signal candidates
+5. `orderbook_watcher`: Binance depth — wall/imbalance detection
+6. `sentiment_index_watcher`: Fear & Greed, DXY/SPX/gold correlation context
 
 ### Phase H — Learning loop
 1. Auto-rug labeling
