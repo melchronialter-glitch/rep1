@@ -9,9 +9,8 @@ Two-stage routing:
   items or 60 seconds, whichever first) and scored by a cheap cached prompt:
   ignore / firehose / medium / strict. On any Claude failure, the whole batch
   falls back to firehose — we never lose events.
-- **Phase C** — ``chain.new_pair`` events: ``tier_hint == "ignore"`` is
-  dropped, everything else gets best-effort DexScreener enrichment and a
-  quick liquidity heuristic (>= $50k → medium, else firehose).
+``chain.new_pair`` routing moved to the rug detector agent in Phase D
+(:mod:`cryptobot.agents.rug_detector`) — triage no longer touches new pairs.
 
 Redis Streams can't wildcard, so watchers publish both to symbol-specific
 topics (``market.price_move.BTCUSDT``) and base aggregate topics
@@ -26,10 +25,8 @@ from typing import Any
 
 from cryptobot import llm
 from cryptobot.bus import Event, get_bus
-from cryptobot.intel.enrich import enrich_new_pair
 from cryptobot.logging import get_logger
 from cryptobot.topics import (
-    CHAIN_NEW_PAIR,
     MARKET_PRICE_MOVE,
     MARKET_VOLUME_SPIKE,
     NEWS_CRYPTO,
@@ -49,13 +46,7 @@ WATCHED = [
     NEWS_MACRO_HIGH_IMPACT,
     MARKET_PRICE_MOVE,
     MARKET_VOLUME_SPIKE,
-    CHAIN_NEW_PAIR,
 ]
-
-# Phase C heuristic: a new pair with this much DexScreener liquidity is worth
-# the medium channel; everything else stays in the firehose. Proper tiering
-# (rug detector, hard rules) lands in Phase D.
-NEW_PAIR_MEDIUM_LIQUIDITY_USD = 50_000.0
 
 NEWS_BATCH_MAX = 10
 NEWS_BATCH_WINDOW_S = 60.0
@@ -100,37 +91,6 @@ def _route_hard_rules(topic: str, event: Event) -> str | None:
     if topic == MARKET_VOLUME_SPIKE:
         return SIGNAL_ALERT_MEDIUM
     return None
-
-
-async def _triage_new_pair(event: Event) -> None:
-    """Phase C: enrich a chain.new_pair event, then quick heuristic tiering.
-
-    ``tier_hint == "ignore"`` events are dropped outright (sub-threshold
-    pump.fun mints — already persisted to the tokens table by the watcher).
-    Everything else gets best-effort DexScreener enrichment, then:
-    liquidity >= $50k → medium, else firehose. Real risk scoring is Phase D.
-    """
-    bus = get_bus()
-    payload = event.payload or {}
-    if payload.get("tier_hint") == "ignore":
-        log.debug("triage.new_pair.ignored", id=event.id, chain=payload.get("chain"))
-        return
-
-    payload = await enrich_new_pair(payload)  # never raises
-    liquidity = float(payload.get("liquidity_usd") or 0.0)
-    target = (
-        SIGNAL_ALERT_MEDIUM
-        if liquidity >= NEW_PAIR_MEDIUM_LIQUIDITY_USD
-        else SIGNAL_ALERT_FIREHOSE
-    )
-    await bus.publish(target, payload, source="triage:chain.new_pair")
-    log.info(
-        "triage.new_pair.routed",
-        to=target,
-        id=event.id,
-        chain=payload.get("chain"),
-        liquidity_usd=liquidity or None,
-    )
 
 
 def _format_news_batch(batch: list[Event]) -> str:
@@ -241,8 +201,6 @@ async def run_triage(stop_event: asyncio.Event | None = None) -> None:
                             SIGNAL_ALERT_FIREHOSE, event.payload, source="triage:overflow"
                         )
                         log.warning("triage.news.queue_full", id=event.id)
-                elif topic == CHAIN_NEW_PAIR:
-                    await _triage_new_pair(event)
                 else:
                     target = _route_hard_rules(topic, event)
                     if target:

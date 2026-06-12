@@ -222,6 +222,41 @@ def tokens(
 
 
 @app.command()
+def risk(
+    min_score: int = typer.Option(0, "--min-score", help="Only rows with score >= this"),
+    chain: str | None = typer.Option(None, help="Filter by chain"),
+    limit: int = typer.Option(20),
+) -> None:
+    """Show recent risk scores produced by the rug detector."""
+
+    async def _run():
+        query = (
+            "SELECT ts, chain, score, routed_to, liquidity_usd, address, reasons "
+            "FROM risk_scores WHERE score >= $1"
+        )
+        args: list = [min_score]
+        if chain:
+            query += " AND chain = $2"
+            args.append(chain)
+        query += f" ORDER BY ts DESC LIMIT ${len(args) + 1}"
+        args.append(limit)
+        rows = await fetch(query, *args)
+        for r in rows:
+            reasons = r["reasons"] or []
+            liq = f"${float(r['liquidity_usd']):,.0f}" if r["liquidity_usd"] is not None else "-"
+            typer.echo(
+                f"{r['ts'].isoformat()}  {r['chain'] or '-':<10}  "
+                f"score={r['score']:<3}  {r['routed_to'].rsplit('.', 1)[-1]:<8}  "
+                f"liq={liq:<12}  {r['address']}"
+            )
+            if reasons:
+                typer.echo(f"    reasons: {', '.join(str(x) for x in reasons[:5])}")
+        await close_pool()
+
+    asyncio.run(_run())
+
+
+@app.command()
 def alerts(limit: int = typer.Option(20)) -> None:
     """Show recent alerts sent."""
 

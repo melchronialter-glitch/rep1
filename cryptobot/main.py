@@ -3,9 +3,11 @@
 Phase B: price watcher, news watcher, Claude triage, coin analyst, daily
 digest, Telegram inbound commands, and Telegram outbound alerts.
 Phase C: chain watchers — pump.fun (always on), Raydium via Helius, EVM
-pairs via Alchemy, BSC via a configurable WS RPC. Every optional component
-checks its own configuration and exits early with a log line if
-unconfigured — the process always starts cleanly.
+pairs via Alchemy, BSC via a configurable WS RPC.
+Phase D: rug detector — safety screen + deterministic 0–100 risk score for
+every new pair, tiered routing to strict/medium/firehose.
+Every optional component checks its own configuration and exits early with a
+log line if unconfigured — the process always starts cleanly.
 """
 
 from __future__ import annotations
@@ -16,6 +18,7 @@ from collections.abc import Awaitable, Callable
 
 from cryptobot.agents.coin_analyst import run_coin_analyst
 from cryptobot.agents.digest import run_digest
+from cryptobot.agents.rug_detector import run_rug_detector
 from cryptobot.agents.triage import run_triage
 from cryptobot.bus import close_bus, get_bus
 from cryptobot.config import get_settings
@@ -83,6 +86,8 @@ async def amain() -> None:
         ("evm_pair_watcher", run_evm_pair_watcher),
         ("bsc_pair_watcher", run_bsc_pair_watcher),
         ("triage", run_triage),
+        # Phase D: deterministic safety screen + risk scoring for new pairs.
+        ("rug_detector", run_rug_detector),
         ("coin_analyst", run_coin_analyst),
         ("digest", run_digest),
         ("telegram_in", run_telegram_in),

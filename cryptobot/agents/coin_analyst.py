@@ -15,9 +15,11 @@ import uuid
 from typing import Any
 
 from cryptobot import llm
+from cryptobot.agents.rug_detector import score_risk
 from cryptobot.bus import get_bus
 from cryptobot.db import execute
 from cryptobot.intel import coin_intel
+from cryptobot.intel.safety import safety_report
 from cryptobot.logging import get_logger
 from cryptobot.topics import INTEL_USER_QUERY, SIGNAL_ALERT_DM
 
@@ -43,17 +45,21 @@ words. Use plain markdown (*bold*, bullet lists), no tables, no code fences."""
 
 RUGCHECK_SYSTEM = """\
 You are a crypto token safety auditor. You receive raw JSON about a token
-(DexScreener liquidity data and GoPlus contract security checks when
-available). Produce a safety-focused report in clean markdown for Telegram:
+(DexScreener liquidity data, plus a merged safety report from GoPlus,
+Honeypot.is and RugCheck when available). Produce a safety-focused report in
+clean markdown for Telegram:
 
 *Contract safety* — honeypot status, buy/sell tax, mintable, proxy, hidden
 owner, ownership renounced, pausable transfers. Flag every red flag clearly.
 *Liquidity* — depth in USD, number of pairs, LP holder count, pair age.
 *Concentration* — owner/creator percentage, holder count.
-*Risk score* — 1 (safe) to 10 (rug/honeypot), with reasons.
+*Risk score* — 1 (safe) to 10 (rug/honeypot), with reasons. The JSON includes
+``deterministic_risk`` — our hard-rule score 0–100 with reasons; anchor your
+score on it (roughly score/10) and only deviate when the raw data clearly
+justifies it, saying why.
 *Verdict* — one of: avoid / watch / interesting.
 
-If security data is unavailable (e.g. Solana token, or API failure), state
+If security data is unavailable (e.g. brand-new token, or API failure), state
 that explicitly and judge only on liquidity. Be blunt — this protects real
 money. Keep it under 250 words. Plain markdown only, no tables, no code
 fences."""
@@ -71,6 +77,49 @@ def _safety_subset(intel: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def _resolve_chain_address(intel: dict[str, Any], query: str) -> tuple[str, str] | None:
+    """Best chain + token address for the safety fan-out, from gathered intel."""
+    pairs = (intel.get("dexscreener") or {}).get("pairs") or []
+    if pairs:
+        best = pairs[0]
+        address = (
+            best.get("base_token_address")
+            if not coin_intel.looks_like_contract_address(query)
+            else query
+        )
+        if best.get("chain") and address:
+            return str(best["chain"]), str(address)
+    if coin_intel.looks_like_evm_address(query):
+        return "ethereum", query
+    if coin_intel.looks_like_solana_address(query):
+        return "solana", query
+    return None
+
+
+async def _rugcheck_extras(intel: dict[str, Any], query: str) -> dict[str, Any]:
+    """Phase D: full safety fan-out + deterministic score for /rugcheck.
+
+    Best-effort — returns {} when the token can't be resolved or screening
+    fails.
+    """
+    resolved = _resolve_chain_address(intel, query)
+    if not resolved:
+        return {}
+    chain, address = resolved
+    try:
+        safety = await safety_report(chain, address)
+        pairs = (intel.get("dexscreener") or {}).get("pairs") or []
+        liquidity = pairs[0].get("liquidity_usd") if pairs else None
+        score, reasons = score_risk({"liquidity_usd": liquidity}, safety)
+        return {
+            "safety_report": safety,
+            "deterministic_risk": {"score": score, "reasons": reasons},
+        }
+    except Exception:
+        log.exception("coin_analyst.safety_failed", chain=chain, address=address)
+        return {}
+
+
 async def analyze_query(query: str, query_type: str = "analyze") -> str:
     """Gather intel and run the Claude analysis. Returns markdown.
 
@@ -80,6 +129,7 @@ async def analyze_query(query: str, query_type: str = "analyze") -> str:
     if query_type == "rugcheck":
         system = RUGCHECK_SYSTEM
         data: dict[str, Any] = _safety_subset(intel)
+        data.update(await _rugcheck_extras(intel, query.strip()))
     else:
         system = ANALYZE_SYSTEM
         data = intel

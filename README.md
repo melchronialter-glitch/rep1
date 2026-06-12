@@ -2,17 +2,17 @@
 
 24/7 agentic crypto market intelligence.
 
-> **Status: Phase C (chain watchers).** On top of the Phase A spine and the
-> Phase B signals, the bot now watches every new token launch on Solana
-> (pump.fun always-on, Raydium via Helius), Ethereum/Base/Arbitrum (Alchemy),
-> and BSC (any WS RPC) — `chain.new_pair.*` flows onto the bus with
-> DexScreener enrichment and lands on the firehose channel. Safety screening,
-> social listeners, and the ML rug detector land in subsequent phases. See
+> **Status: Phase D (safety + rug detection v1).** Every new pair now gets a
+> deterministic safety screen (GoPlus + Honeypot.is on EVM, RugCheck on
+> Solana) and a hard-rule 0–100 risk score before being routed to the
+> strict/medium/firehose tiers. Scores are persisted to `risk_scores` as the
+> future ML training set. The ML classifier itself, social listeners and the
+> learning loop land in later phases. See
 > [`ARCHITECTURE.md`](ARCHITECTURE.md) for the full design and phase plan.
 
 ---
 
-## What works today (Phase A + B + C)
+## What works today (Phase A + B + C + D)
 
 - Redis Streams event bus with Postgres archive
 - Postgres + TimescaleDB + pgvector via Docker
@@ -36,17 +36,34 @@
   Aerodrome on Base) factory events on Ethereum, Base, Arbitrum — one
   resilient task per chain
 - **BSC pair watcher** (opt-in via `BSC_WS_URL`): PancakeSwap V2 factory
-- **New-pair triage**: DexScreener enrichment (liquidity/fdv/price), then a
-  quick heuristic split — liquidity ≥ $50k → medium channel, else firehose
-- CLI for ops (`migrate`, `health`, `publish`, `demo`, `events`, `alerts`, `analyze`, `news`, `tokens`)
+- **Safety adapters** (`intel/safety/`): GoPlus token security +
+  Honeypot.is simulation (EVM, fanned out concurrently), RugCheck summary
+  (Solana) — all best-effort, a dead API degrades instead of failing
+- **Rug detector** (replaces the Phase C new-pair triage heuristic):
+  DexScreener enrichment → safety screen → deterministic 0–100 hard-rule
+  risk score (honeypot, taxes, mint/proxy/selfdestruct flags, owner
+  concentration, RugCheck risks, liquidity floor) → tiered routing:
+  score ≥ 70 → firehose with a "⚠️ HIGH RISK" title; score < 30 and
+  liquidity ≥ $50k → strict; score < 50 and liquidity ≥ $10k → medium;
+  everything else → firehose. Fresh pump.fun mints are scored "unscreened"
+  (the safety APIs don't know them yet) and stay in the firehose
+- **`risk_scores` table**: every score persisted with reasons + the raw
+  safety report — the Phase H ML training set
+- **Richer `/rugcheck`**: the full safety fan-out plus the deterministic
+  score is handed to Claude, which anchors its 1–10 rating on it
+- CLI for ops (`migrate`, `health`, `publish`, `demo`, `events`, `alerts`, `analyze`, `news`, `tokens`, `risk`)
 
 ## What does NOT work yet
 
-No safety screening / rug detector ML (Phase D brings RugCheck/GoPlus/
-honeypot checks and real tiering), no whale/LP watchers, no social listeners
-(Telegram groups, X, Reddit, Discord), no narrative tracker, no smart-money
-discovery, no web UI. They're scheduled across phases D–J in the
-architecture doc.
+The risk score is hard rules only — no trained ML model yet (xgboost lands
+in Phase H once `risk_scores` has labeled data). Pump.fun mints get no real
+safety screen (the APIs don't index them that early), so they're scored
+"unscreened" rather than actually checked. RugCheck/Honeypot.is are free
+public endpoints with no SLA — when they're down the score silently degrades
+to the remaining sources (+10 "unscreened" if nothing answers). No LP-lock
+checks, no whale/LP watchers, no social listeners (Telegram groups, X,
+Reddit, Discord), no narrative tracker, no smart-money discovery, no web UI.
+They're scheduled across phases E–J in the architecture doc.
 
 ---
 
@@ -173,11 +190,17 @@ cryptobot/
 │   └── bsc.py            # PancakeSwap V2 factory over BSC_WS_URL
 ├── agents/
 │   ├── triage.py         # two-stage router: hard rules + Claude Haiku
+│   ├── rug_detector.py   # safety screen + 0–100 risk score for new pairs
 │   ├── coin_analyst.py   # /analyze + /rugcheck deep-dives (Sonnet)
 │   └── digest.py         # daily 07:00 UTC summary
 ├── intel/
 │   ├── coin_intel.py     # CoinGecko + DexScreener + GoPlus gatherer
-│   └── enrich.py         # DexScreener enrichment for new pairs
+│   ├── enrich.py         # DexScreener enrichment for new pairs
+│   └── safety/           # Phase D safety fan-out
+│       ├── __init__.py   # safety_report(chain, address)
+│       ├── goplus.py     # GoPlus token security (EVM)
+│       ├── honeypot.py   # Honeypot.is simulation (EVM)
+│       └── rugcheck.py   # RugCheck summary (Solana)
 ├── reporters/
 │   ├── formatter.py      # render Event → Telegram message
 │   ├── telegram_out.py   # outbound bot, 4 channels + DM, retries
@@ -189,15 +212,16 @@ cryptobot/
 migrations/
 ├── 001_initial.sql       # events + alerts tables
 ├── 002_phase_b.sql       # price_snapshots, news_items, analyses
-└── 003_phase_c.sql       # tokens, pairs
+├── 003_phase_c.sql       # tokens, pairs
+└── 004_phase_d.sql       # risk_scores
 ```
 
 ---
 
-## Next: Phase D
+## Next: Phase E
 
-Safety + rug detection v1: `intel/safety/` adapters (RugCheck, GoPlus,
-Honeypot.is), the first rug detector with hard rules + heuristic score, and
-proper tiered alerts (strict / medium / firehose).
+Social listeners: Telegram groups via Telethon, the TG call parser, X
+(Apify/TwitterAPI adapters), Reddit, Discord, and the translator agent for
+non-English sources.
 
 See `ARCHITECTURE.md` §11 for the full build order.

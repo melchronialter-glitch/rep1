@@ -63,6 +63,9 @@ def _new_pair_render(p: dict[str, Any]) -> dict[str, str]:
     title = f"New pair [{chain}] {what}"
     if p.get("token1"):
         title += f"/{p['token1']}"
+    risk_score = p.get("risk_score")
+    if risk_score is not None and int(risk_score) >= 70:
+        title = f"⚠️ HIGH RISK {title}"
 
     body_lines: list[str] = []
     if p.get("venue"):
@@ -77,6 +80,12 @@ def _new_pair_render(p: dict[str, Any]) -> dict[str, str]:
         body_lines.append(f"token1: {p['token1']}")
     if p.get("pair_address"):
         body_lines.append(f"pair: {p['pair_address']}")
+    if risk_score is not None:
+        reasons = [str(r) for r in (p.get("risk_reasons") or [])[:3]]
+        line = f"risk: {int(risk_score)}/100"
+        if reasons:
+            line += f" ({', '.join(reasons)})"
+        body_lines.append(line)
     if p.get("liquidity_usd") is not None:
         body_lines.append(f"liquidity: ${float(p['liquidity_usd']):,.0f}")
     if p.get("fdv") is not None:

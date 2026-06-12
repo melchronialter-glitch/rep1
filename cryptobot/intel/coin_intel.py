@@ -19,29 +19,19 @@ from typing import Any
 
 import httpx
 
+from cryptobot.intel.safety import goplus as goplus_adapter
+from cryptobot.intel.safety.goplus import GOPLUS_CHAIN_IDS  # noqa: F401  (re-export)
 from cryptobot.logging import get_logger
 
 log = get_logger(__name__)
 
 COINGECKO_BASE = "https://api.coingecko.com/api/v3"
 DEXSCREENER_SEARCH = "https://api.dexscreener.com/latest/dex/search"
-GOPLUS_TOKEN_SECURITY = "https://api.gopluslabs.io/api/v1/token_security/{chain_id}"
 
 HTTP_TIMEOUT = httpx.Timeout(20.0, connect=8.0)
 
 _EVM_ADDR_RE = re.compile(r"^0x[0-9a-fA-F]{40}$")
 _SOLANA_ADDR_RE = re.compile(r"^[1-9A-HJ-NP-Za-km-z]{32,44}$")
-
-# DexScreener chain id -> GoPlus numeric chain id (EVM chains only)
-GOPLUS_CHAIN_IDS: dict[str, str] = {
-    "ethereum": "1",
-    "bsc": "56",
-    "polygon": "137",
-    "arbitrum": "42161",
-    "base": "8453",
-    "optimism": "10",
-    "avalanche": "43114",
-}
 
 
 def looks_like_evm_address(query: str) -> bool:
@@ -163,28 +153,14 @@ async def _dexscreener_lookup(client: httpx.AsyncClient, query: str) -> dict[str
 
 
 # ---- GoPlus token security (EVM) ---------------------------------------------
+# Extracted to cryptobot.intel.safety.goplus in Phase D; kept as a thin alias
+# so this module's behavior (including raising on transport errors, handled
+# by gather()'s try/except) is unchanged.
 
 async def _goplus_lookup(
     client: httpx.AsyncClient, chain_id: str, address: str
 ) -> dict[str, Any] | None:
-    resp = await client.get(
-        GOPLUS_TOKEN_SECURITY.format(chain_id=chain_id),
-        params={"contract_addresses": address},
-    )
-    resp.raise_for_status()
-    result = (resp.json().get("result") or {}).get(address.lower())
-    if not result:
-        return None
-    # Keep only the fields that matter for a safety read.
-    keep = [
-        "is_honeypot", "honeypot_with_same_creator", "buy_tax", "sell_tax",
-        "is_mintable", "is_proxy", "is_open_source", "can_take_back_ownership",
-        "owner_address", "owner_percent", "creator_address", "creator_percent",
-        "is_blacklisted", "is_whitelisted", "transfer_pausable", "trading_cooldown",
-        "hidden_owner", "selfdestruct", "anti_whale_modifiable", "slippage_modifiable",
-        "holder_count", "lp_holder_count", "total_supply",
-    ]
-    return {k: result[k] for k in keep if k in result}
+    return await goplus_adapter.check(chain_id, address, client=client)
 
 
 # ---- Public API ---------------------------------------------------------------
