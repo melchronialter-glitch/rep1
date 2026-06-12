@@ -56,8 +56,10 @@ class TelegramOut:
         *,
         parse_mode: str = "MarkdownV2",
         disable_web_page_preview: bool = True,
+        chat_id: str | None = None,
     ) -> bool:
-        chat_id = self._settings.telegram_chat_id(channel)
+        """Send to a logical channel, or directly to ``chat_id`` if given."""
+        chat_id = chat_id or self._settings.telegram_chat_id(channel)
         ok_all = True
         for chunk in _split(text, MAX_MSG_LEN):
             ok = await self._send_chunk(
@@ -170,7 +172,12 @@ async def run_alert_sender(stop_event: asyncio.Event | None = None) -> None:
             try:
                 rendered = render_alert(event)
                 md = to_markdown_v2(rendered["title"], rendered["body"])
-                ok = await sender.send(channel, md)
+                # On-demand replies (e.g. /analyze) carry the requester's chat
+                # id so we answer in the right chat instead of the dm channel.
+                reply_to = (event.payload or {}).get("reply_to_chat_id")
+                ok = await sender.send(
+                    channel, md, chat_id=str(reply_to) if reply_to else None
+                )
                 await _record_alert(
                     event=event,
                     channel=channel,

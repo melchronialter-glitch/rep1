@@ -144,6 +144,53 @@ def events(
 
 
 @app.command()
+def analyze(
+    query: str = typer.Argument(..., help="Symbol (btc, pepe) or contract address"),
+    rugcheck: bool = typer.Option(False, help="Safety-focused report instead of full analysis"),
+) -> None:
+    """Analyze a coin directly (no bot needed; requires ANTHROPIC_API_KEY)."""
+
+    async def _run():
+        from cryptobot.agents.coin_analyst import analyze_query
+
+        query_type = "rugcheck" if rugcheck else "analyze"
+        md = await analyze_query(query, query_type)
+        typer.echo(md)
+        await close_pool()
+
+    asyncio.run(_run())
+
+
+@app.command()
+def news(
+    limit: int = typer.Option(20),
+    macro: bool = typer.Option(False, help="Only macro items"),
+) -> None:
+    """Show recent news items collected by the news watcher."""
+
+    async def _run():
+        if macro:
+            rows = await fetch(
+                "SELECT ts, source, is_macro, title, url FROM news_items "
+                "WHERE is_macro ORDER BY ts DESC LIMIT $1",
+                limit,
+            )
+        else:
+            rows = await fetch(
+                "SELECT ts, source, is_macro, title, url FROM news_items "
+                "ORDER BY ts DESC LIMIT $1",
+                limit,
+            )
+        for r in rows:
+            tag = "MACRO" if r["is_macro"] else "     "
+            typer.echo(f"{r['ts'].isoformat()}  {tag}  {r['source']:<14}  {r['title']}")
+            typer.echo(f"    {r['url']}")
+        await close_pool()
+
+    asyncio.run(_run())
+
+
+@app.command()
 def alerts(limit: int = typer.Option(20)) -> None:
     """Show recent alerts sent."""
 
