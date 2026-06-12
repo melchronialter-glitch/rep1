@@ -109,6 +109,12 @@ class Settings(BaseSettings):
     # ---- Phase H: learning loop ----
     rug_forensic_min_samples: int = 20   # min labeled rugs before forensic agent runs
     ml_model_path: str = "data/rug_model.joblib"
+    # Outcome tracker: re-check seen tokens and auto-label rug/notrug from
+    # their on-chain fate; retrain once enough new labels accumulate.
+    outcome_check_interval_s: int = 21600   # 6h
+    outcome_min_age_h: int = 6   # confirmed LP pulls are judged from 6h
+    outcome_max_age_d: int = 14
+    rug_retrain_min_new_labels: int = 25
 
     # ---- Computed ----
     @property

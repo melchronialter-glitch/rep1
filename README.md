@@ -2,15 +2,19 @@
 
 24/7 agentic crypto market intelligence.
 
-> **Status: Phases A–I built.** All intelligence layers are in: chain +
-> social + news + market watchers, the deterministic rug detector with an
-> advisory ML classifier on top (train it with `cryptobot train-rug-model`
-> once you've labeled coins via `/rug` / `/notrug`), technical-indicator
+> **Status: Phases A–I built, learning loop closed.** All intelligence
+> layers are in: chain + social + news + market watchers, the deterministic
+> rug detector with an advisory ML classifier on top, technical-indicator
 > buy/sell signal candidates (RSI/MACD/EMA/Bollinger), narrative tracking,
 > smart-money scaffolding, macro impact analysis, and a FastAPI web UI
-> (`cryptobot web`). Remaining: Phase J (the sniper interface — separate
-> project) and items that need live data to mature (ML accuracy, caller
-> performance scoring). See [`ARCHITECTURE.md`](ARCHITECTURE.md).
+> (`cryptobot web`). **The bot labels rugs itself**: the outcome tracker
+> re-reads every seen token's liquidity from the chain, auto-labels
+> rug/notrug from its fate, and retrains the classifier — no manual
+> labeling. Bootstrap the dataset on day one with
+> `cryptobot backfill-rugs` (seeds hundreds of live pools; outcomes are
+> judged within 6–72h). Remaining: Phase J (the sniper bot — separate
+> project; its consumer skeleton ships in `cryptobot/sniper_interface/`).
+> See [`ARCHITECTURE.md`](ARCHITECTURE.md).
 
 ---
 
@@ -73,11 +77,17 @@
 
 ## What does NOT work yet / honest limitations
 
-- **The ML classifier ships untrained.** Routing stays on the deterministic
-  hard-rule score until you label ≥20 coins with `/rug` / `/notrug` (or
-  `cryptobot label`) and run `cryptobot train-rug-model`. Even then the
-  model is advisory (`ml_rug_probability` on alerts) — it never overrides
-  the hard rules.
+- **The ML classifier ships untrained** and needs ≥20 auto-labeled outcomes
+  before the first (automatic) training run. Run `cryptobot backfill-rugs`
+  on a couple of networks at deploy time; the outcome tracker labels the
+  seeded pools from their on-chain fate within 6–72h and trains itself.
+  The model is advisory (`ml_rug_probability` on alerts) — it never
+  overrides the deterministic hard rules. `/rug` / `/notrug` /
+  `cryptobot label` still exist for manual corrections.
+- **Free new-pool feeds only reach back hours**, so a fully-decided
+  historical rug dataset can't be downloaded in one shot — the backfill
+  seeds live pools and the chain decides them within hours/days. (Decided
+  survivors ARE ingested immediately from established pools.)
 - Pump.fun mints get no real safety screen (the APIs don't index them that
   early) — scored "unscreened", kept in the firehose.
 - RugCheck/Honeypot.is/Messari/Forex-Factory are free endpoints with no

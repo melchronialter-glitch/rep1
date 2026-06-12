@@ -256,6 +256,37 @@ def risk(
     asyncio.run(_run())
 
 
+@app.command("backfill-rugs")
+def backfill_rugs(
+    network: str = typer.Option("solana", help="solana|eth|base|bsc|arbitrum"),
+    pages: int = typer.Option(5, help="GeckoTerminal pages to pull (20 pools each)"),
+    max_tokens: int = typer.Option(100, help="Max tokens to ingest this run"),
+    train: bool = typer.Option(True, help="Retrain the rug model after ingesting"),
+) -> None:
+    """Build a labeled training set from historical on-chain outcomes.
+
+    Pulls aged pools from GeckoTerminal (free, no key): recently created
+    pools that are already drained become 'rug' examples; established pools
+    still holding liquidity become 'notrug'. Each token gets the normal
+    safety screen + risk score so training joins work exactly like live
+    detections. Run for several networks to diversify the dataset.
+    """
+
+    async def _run():
+        from cryptobot.ml.backfill import backfill
+
+        stats = await backfill(network=network, pages=pages, max_tokens=max_tokens)
+        typer.echo(json.dumps(stats, indent=2, default=str))
+        if train and not stats.get("error"):
+            from cryptobot.ml.train import train as train_model
+
+            metrics = await train_model()
+            typer.echo(json.dumps(metrics, indent=2))
+        await close_pool()
+
+    asyncio.run(_run())
+
+
 @app.command("train-rug-model")
 def train_rug_model() -> None:
     """Train the rug classifier from /rug- and /notrug-labeled coins.

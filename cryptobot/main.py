@@ -27,6 +27,7 @@ from cryptobot.agents.digest import run_digest
 from cryptobot.agents.indicator_engine import run_indicator_engine
 from cryptobot.agents.macro_impact import run_macro_impact
 from cryptobot.agents.narrative_tracker import run_narrative_tracker
+from cryptobot.agents.outcome_tracker import run_outcome_tracker
 from cryptobot.agents.rug_detector import run_rug_detector
 from cryptobot.agents.rug_forensic import run_rug_forensic as run_rug_forensic_agent
 from cryptobot.agents.smart_money_agent import run_smart_money_agent
@@ -136,6 +137,7 @@ async def amain() -> None:
         ("macro_impact_agent", run_macro_impact),
         # Phase H
         ("rug_forensic_agent", run_rug_forensic_agent),
+        ("outcome_tracker", run_outcome_tracker),
     ]
     if settings.telegram_bot_token:
         runners.append(("telegram_out", run_alert_sender))
