@@ -40,6 +40,22 @@ INTEL_USER_QUERY = "intel.user_query"
 INTEL_COIN_LABELED = "intel.coin_labeled"
 INTEL_RUG_CONFIRMED = "intel.rug_confirmed"
 
+# ---- Phase G: market depth & macro calendar ----
+MARKET_INDICATOR_SIGNAL = "market.indicator_signal"      # + .{symbol}
+MARKET_ORDERBOOK_IMBALANCE = "market.orderbook_imbalance"  # + .{symbol}
+MARKET_SENTIMENT_SHIFT = "market.sentiment_shift"
+CHAIN_UPCOMING_LAUNCH = "chain.upcoming_launch"
+CHAIN_VESTING_UNLOCK = "chain.vesting_unlock"
+NEWS_ECON_EVENT = "news.econ_event"
+
+# ---- Phase H ----
+INTEL_RUG_LABEL = "intel.rug_label"   # user labeled a coin as rug or not
+
+# ---- Phase F ----
+SOCIAL_DEV_ACTIVITY = "social.dev_activity"
+SOCIAL_NARRATIVE_SPIKE = "social.narrative_spike"
+SMART_MONEY_WALLET = "chain.smart_money_wallet"
+
 # Map signal topics → outbound channel name in the Telegram reporter.
 ALERT_TOPIC_TO_CHANNEL: dict[str, str] = {
     SIGNAL_ALERT_STRICT: "strict",

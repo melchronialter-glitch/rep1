@@ -27,9 +27,13 @@ from cryptobot import llm
 from cryptobot.bus import Event, get_bus
 from cryptobot.logging import get_logger
 from cryptobot.topics import (
+    MARKET_INDICATOR_SIGNAL,
+    MARKET_ORDERBOOK_IMBALANCE,
     MARKET_PRICE_MOVE,
+    MARKET_SENTIMENT_SHIFT,
     MARKET_VOLUME_SPIKE,
     NEWS_CRYPTO,
+    NEWS_ECON_EVENT,
     NEWS_MACRO,
     NEWS_MACRO_HIGH_IMPACT,
     SIGNAL_ALERT_FIREHOSE,
@@ -48,6 +52,10 @@ WATCHED = [
     NEWS_MACRO_HIGH_IMPACT,
     MARKET_PRICE_MOVE,
     MARKET_VOLUME_SPIKE,
+    MARKET_INDICATOR_SIGNAL,
+    MARKET_ORDERBOOK_IMBALANCE,
+    MARKET_SENTIMENT_SHIFT,
+    NEWS_ECON_EVENT,
     SOCIAL_X_TWEET,
     SOCIAL_REDDIT_POST,
 ]
@@ -99,6 +107,40 @@ def _route_hard_rules(topic: str, event: Event) -> str | None:
     # contract address, which the caller already flagged via persist=True).
     if topic in (SOCIAL_X_TWEET, SOCIAL_REDDIT_POST):
         return SIGNAL_ALERT_FIREHOSE
+    # Phase G: technical indicators — strength of signal determines routing.
+    if topic == MARKET_INDICATOR_SIGNAL:
+        signals = payload.get("signals") or []
+        bias = (payload.get("bias") or "").lower()
+        rsi = payload.get("rsi") or 50.0
+        volume_ratio = payload.get("volume_ratio") or 1.0
+        # Strict: extreme RSI + volume spike together
+        if (rsi < 25 or rsi > 75) and volume_ratio >= 3.0:
+            return SIGNAL_ALERT_STRICT
+        # Medium: clean MACD crossover, oversold/overbought RSI, or BB touch with bias
+        if any(
+            s in signals
+            for s in ("macd_bullish_cross", "macd_bearish_cross", "rsi_oversold", "rsi_overbought")
+        ):
+            return SIGNAL_ALERT_MEDIUM
+        # Firehose: any other indicator signal
+        if signals:
+            return SIGNAL_ALERT_FIREHOSE
+        return None
+    if topic == MARKET_ORDERBOOK_IMBALANCE:
+        return SIGNAL_ALERT_FIREHOSE
+    if topic == MARKET_SENTIMENT_SHIFT:
+        # Extreme F&G or large SPX drop → macro channel
+        fg = payload.get("fear_greed_index") or 50
+        spx_chg = payload.get("spx_change_1d_pct") or 0.0
+        if fg <= 25 or fg >= 75 or spx_chg <= -2.0:
+            return SIGNAL_ALERT_MACRO
+        return SIGNAL_ALERT_MEDIUM
+    if topic == NEWS_ECON_EVENT:
+        currency = (payload.get("currency") or "").upper()
+        impact = (payload.get("impact") or "").lower()
+        if impact == "high" and currency == "USD":
+            return SIGNAL_ALERT_MACRO
+        return SIGNAL_ALERT_MEDIUM
     return None
 
 

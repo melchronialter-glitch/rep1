@@ -88,6 +88,28 @@ class Settings(BaseSettings):
     log_level: str = "INFO"
     log_json: bool = False
 
+    # ---- Phase G: market depth ----
+    coinglass_api_key: str = ""
+    indicator_rsi_period: int = 14
+    indicator_ema_short: int = 12
+    indicator_ema_long: int = 26
+    indicator_macd_signal: int = 9
+    orderbook_symbols: str = "BTCUSDT,ETHUSDT,SOLUSDT"
+    orderbook_imbalance_threshold: float = 0.3   # bid/(bid+ask) < this or > (1-this)
+    launch_radar_poll_interval_s: int = 3600
+    econ_calendar_poll_interval_s: int = 3600
+
+    # ---- Phase F: smart money + social intelligence ----
+    whale_min_sol: float = 500.0
+    whale_min_eth: float = 50.0
+    github_tracked_repos: str = ""
+    github_token: str = ""
+    narrative_spike_threshold: int = 10  # mentions in 1h to trigger spike alert
+
+    # ---- Phase H: learning loop ----
+    rug_forensic_min_samples: int = 20   # min labeled rugs before forensic agent runs
+    ml_model_path: str = "data/rug_model.joblib"
+
     # ---- Computed ----
     @property
     def postgres_dsn(self) -> str:
@@ -99,6 +121,10 @@ class Settings(BaseSettings):
     @property
     def redis_url(self) -> str:
         return f"redis://{self.redis_host}:{self.redis_port}/{self.redis_db}"
+
+    @property
+    def orderbook_symbol_list(self) -> list[str]:
+        return [s.strip().upper() for s in self.orderbook_symbols.split(",") if s.strip()]
 
     @property
     def price_symbol_list(self) -> list[str]:
@@ -119,6 +145,10 @@ class Settings(BaseSettings):
     def reddit_subreddit_list(self) -> list[str]:
         """``reddit_subreddits`` parsed into a list (comma-separated env value)."""
         return [s.strip().removeprefix("r/") for s in self.reddit_subreddits.split(",") if s.strip()]
+
+    @property
+    def github_repo_list(self) -> list[str]:
+        return [r.strip() for r in self.github_tracked_repos.split(",") if r.strip()]
 
     @property
     def telegram_user_configured(self) -> bool:
