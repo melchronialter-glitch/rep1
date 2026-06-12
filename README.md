@@ -2,14 +2,15 @@
 
 24/7 agentic crypto market intelligence.
 
-> **Status: Phase E (social listeners).** On top of the Phase D safety
-> screen + rug detector, the bot now listens to Telegram groups (as your
-> user account via Telethon), X/Twitter (Apify or TwitterAPI.io adapters),
-> and Reddit; detects coin calls (contract address + buy-language/$TICKER)
-> with per-caller history; and translates ZH/KO/RU/JA posts to English via
-> Claude Haiku. The ML classifier, smart-money discovery, narrative tracker
-> and the learning loop land in later phases. See
-> [`ARCHITECTURE.md`](ARCHITECTURE.md) for the full design and phase plan.
+> **Status: Phases A–I built.** All intelligence layers are in: chain +
+> social + news + market watchers, the deterministic rug detector with an
+> advisory ML classifier on top (train it with `cryptobot train-rug-model`
+> once you've labeled coins via `/rug` / `/notrug`), technical-indicator
+> buy/sell signal candidates (RSI/MACD/EMA/Bollinger), narrative tracking,
+> smart-money scaffolding, macro impact analysis, and a FastAPI web UI
+> (`cryptobot web`). Remaining: Phase J (the sniper interface — separate
+> project) and items that need live data to mature (ML accuracy, caller
+> performance scoring). See [`ARCHITECTURE.md`](ARCHITECTURE.md).
 
 ---
 
@@ -70,21 +71,27 @@
   verified bot application (revisited in a later phase)
 - CLI for ops (`migrate`, `health`, `publish`, `demo`, `events`, `alerts`, `analyze`, `news`, `tokens`, `risk`, `calls`, `tg-login`)
 
-## What does NOT work yet
+## What does NOT work yet / honest limitations
 
-The risk score is hard rules only — no trained ML model yet (xgboost lands
-in Phase H once `risk_scores` has labeled data). Pump.fun mints get no real
-safety screen (the APIs don't index them that early), so they're scored
-"unscreened" rather than actually checked. RugCheck/Honeypot.is are free
-public endpoints with no SLA — when they're down the score silently degrades
-to the remaining sources (+10 "unscreened" if nothing answers). Caller
-scoring is raw call volume only — "did their calls actually pump?"
-performance scoring is a later phase. No technical-indicator engine
-(RSI/MACD buy/sell signals), no launch radar (presales/vesting/unlocks), no
-LP-lock checks, no whale/LP watchers, no Discord listener (ToS), no
-narrative tracker, no smart-money discovery, no derivatives/orderbook/
-sentiment-index watchers, no learning loop, no web UI. They're scheduled
-across phases F–J in the architecture doc.
+- **The ML classifier ships untrained.** Routing stays on the deterministic
+  hard-rule score until you label ≥20 coins with `/rug` / `/notrug` (or
+  `cryptobot label`) and run `cryptobot train-rug-model`. Even then the
+  model is advisory (`ml_rug_probability` on alerts) — it never overrides
+  the hard rules.
+- Pump.fun mints get no real safety screen (the APIs don't index them that
+  early) — scored "unscreened", kept in the firehose.
+- RugCheck/Honeypot.is/Messari/Forex-Factory are free endpoints with no
+  SLA; when one is down the relevant signal silently degrades.
+- Caller scoring is raw call volume; "did their calls actually pump?"
+  performance scoring needs price-history joins that mature with live data.
+- Smart-money discovery is scaffolding: the whale watcher reads wallets
+  from `cb:watched_wallets:{chain}` Redis sets, but automatic discovery of
+  *new* profitable wallets from on-chain history isn't built.
+- No Discord listener (selfbots violate ToS — needs a verified bot app).
+- No LP-lock checks or LP-event watcher (`chain.lp_event` is declared but
+  nothing publishes it).
+- Phase J (sniper interface) is intentionally not built — only the signal
+  contract in `cryptobot/sniper_interface/README.md`.
 
 ---
 

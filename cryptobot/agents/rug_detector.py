@@ -264,6 +264,16 @@ async def _handle_new_pair(payload: dict[str, Any]) -> None:
     out["risk_score"] = score
     out["risk_reasons"] = reasons
     out["safety"] = _trim_safety(safety)
+    # Phase H: advisory ML probability — never changes routing, only informs.
+    try:
+        from cryptobot.ml.features import extract_features
+        from cryptobot.ml.infer import rug_probability
+
+        ml_prob = rug_probability(extract_features(safety, liquidity))
+        if ml_prob is not None:
+            out["ml_rug_probability"] = round(ml_prob, 3)
+    except Exception:
+        log.exception("rug_detector.ml_inference_failed")
     await bus.publish(target, out, source="rug_detector:chain.new_pair")
     await _persist_score(payload, score, reasons, _trim_safety(safety), target)
     log.info(

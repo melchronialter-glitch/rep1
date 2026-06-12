@@ -9,7 +9,7 @@ import typer
 
 from cryptobot.bus import close_bus, get_bus
 from cryptobot.config import get_settings
-from cryptobot.db import close_pool, fetch, fetchrow, run_migrations
+from cryptobot.db import close_pool, execute, fetch, fetchrow, run_migrations
 from cryptobot.logging import get_logger
 from cryptobot.reporters.telegram_out import TelegramOut
 
@@ -251,6 +251,59 @@ def risk(
             )
             if reasons:
                 typer.echo(f"    reasons: {', '.join(str(x) for x in reasons[:5])}")
+        await close_pool()
+
+    asyncio.run(_run())
+
+
+@app.command("train-rug-model")
+def train_rug_model() -> None:
+    """Train the rug classifier from /rug- and /notrug-labeled coins.
+
+    Joins risk_scores with rug_labels, trains a gradient-boosted classifier,
+    and saves it to ML_MODEL_PATH. The rug detector picks the model up on its
+    next process start and attaches ml_rug_probability to every new-pair
+    alert (advisory — the deterministic score still controls routing).
+    Refuses to train below RUG_FORENSIC_MIN_SAMPLES labeled examples.
+    """
+
+    async def _run():
+        from cryptobot.ml.train import train
+
+        metrics = await train()
+        typer.echo(json.dumps(metrics, indent=2))
+        await close_pool()
+
+    asyncio.run(_run())
+
+
+@app.command()
+def label(
+    address: str = typer.Argument(..., help="Token contract address"),
+    rug: bool = typer.Option(True, "--rug/--notrug", help="Label as rug or not-rug"),
+    notes: str = typer.Option("", help="Optional notes about the label"),
+) -> None:
+    """Label a coin as rug/notrug from the CLI (same effect as /rug in Telegram)."""
+
+    async def _run():
+        from cryptobot.topics import INTEL_RUG_LABEL
+
+        label_value = "rug" if rug else "notrug"
+        await execute(
+            "INSERT INTO rug_labels (address, chain, label, labeled_by, notes) "
+            "VALUES ($1, NULL, $2, 'cli', $3) ON CONFLICT (address, label) DO NOTHING",
+            address,
+            label_value,
+            notes or None,
+        )
+        bus = get_bus()
+        await bus.publish(
+            INTEL_RUG_LABEL,
+            {"address": address, "label": label_value, "labeled_by": "cli"},
+            source="cli.label",
+        )
+        typer.echo(f"labeled {address} as {label_value}")
+        await close_bus()
         await close_pool()
 
     asyncio.run(_run())
