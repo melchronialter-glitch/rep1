@@ -47,6 +47,27 @@ class Settings(BaseSettings):
     bsc_ws_url: str = ""  # websocket RPC, e.g. QuickNode free tier
     pumpfun_min_initial_buy_sol: float = 1.0  # below → tier_hint "ignore"
 
+    # ---- Phase E: Telegram user account (Telethon listener) ----
+    telegram_user_api_id: str = ""
+    telegram_user_api_hash: str = ""
+    telegram_user_phone: str = ""
+    telegram_session_path: str = "data/tg_user.session"
+    # Comma-separated chat IDs and/or chat titles to listen to; empty = all.
+    tg_watch_chats: str = ""
+
+    # ---- Phase E: X (Twitter) scraper adapters ----
+    apify_api_token: str = ""
+    twitterapi_io_key: str = ""
+    x_watch_handles: str = "aeyakovenko,blknoiz06,theunipcs,MustStopMurad,frankdegods"
+    x_poll_interval_s: int = 120
+
+    # ---- Phase E: Reddit (public JSON API, no key) ----
+    reddit_subreddits: str = "CryptoCurrency,solana,CryptoMoonShots"
+    reddit_poll_interval_s: int = 300
+
+    # ---- Phase E: translation ----
+    translation_enabled: bool = True
+
     # ---- Phase B: email digests ----
     email_smtp_host: str = ""
     email_smtp_port: int = 587
@@ -83,6 +104,25 @@ class Settings(BaseSettings):
     def price_symbol_list(self) -> list[str]:
         """``price_symbols`` parsed into a lowercase list (comma-separated env value)."""
         return [s.strip().lower() for s in self.price_symbols.split(",") if s.strip()]
+
+    @property
+    def tg_watch_chat_set(self) -> set[str]:
+        """``tg_watch_chats`` parsed into a lowercase set (IDs and/or titles)."""
+        return {c.strip().lower() for c in self.tg_watch_chats.split(",") if c.strip()}
+
+    @property
+    def x_watch_handle_list(self) -> list[str]:
+        """``x_watch_handles`` parsed into a list (comma-separated env value)."""
+        return [h.strip().lstrip("@") for h in self.x_watch_handles.split(",") if h.strip()]
+
+    @property
+    def reddit_subreddit_list(self) -> list[str]:
+        """``reddit_subreddits`` parsed into a list (comma-separated env value)."""
+        return [s.strip().removeprefix("r/") for s in self.reddit_subreddits.split(",") if s.strip()]
+
+    @property
+    def telegram_user_configured(self) -> bool:
+        return bool(self.telegram_user_api_id and self.telegram_user_api_hash)
 
     @property
     def email_configured(self) -> bool:
