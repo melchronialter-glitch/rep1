@@ -1,9 +1,11 @@
 """Process entry point. Runs the agents and reporters configured for this node.
 
 Phase B: price watcher, news watcher, Claude triage, coin analyst, daily
-digest, Telegram inbound commands, and Telegram outbound alerts. Every
-optional component checks its own configuration and exits early with a log
-line if unconfigured — the process always starts cleanly.
+digest, Telegram inbound commands, and Telegram outbound alerts.
+Phase C: chain watchers — pump.fun (always on), Raydium via Helius, EVM
+pairs via Alchemy, BSC via a configurable WS RPC. Every optional component
+checks its own configuration and exits early with a log line if
+unconfigured — the process always starts cleanly.
 """
 
 from __future__ import annotations
@@ -21,9 +23,13 @@ from cryptobot.db import close_pool, get_pool, run_migrations
 from cryptobot.logging import get_logger
 from cryptobot.reporters.telegram_in import run_telegram_in
 from cryptobot.reporters.telegram_out import run_alert_sender
+from cryptobot.watchers.bsc import run_bsc_pair_watcher
+from cryptobot.watchers.evm.pairs import run_evm_pair_watcher
 from cryptobot.watchers.macro_news import run_macro_news_watcher
 from cryptobot.watchers.news import run_news_watcher
 from cryptobot.watchers.prices import run_price_watcher
+from cryptobot.watchers.solana.dex import run_solana_dex_watcher
+from cryptobot.watchers.solana.pumpfun import run_pumpfun_watcher
 
 log = get_logger(__name__)
 
@@ -70,6 +76,12 @@ async def amain() -> None:
         ("price_watcher", run_price_watcher),
         ("news_watcher", run_news_watcher),
         ("macro_news_watcher", run_macro_news_watcher),
+        # Phase C chain watchers. pump.fun needs no key — always on; the
+        # others self-disable with a log line when unconfigured.
+        ("pumpfun_watcher", run_pumpfun_watcher),
+        ("solana_dex_watcher", run_solana_dex_watcher),
+        ("evm_pair_watcher", run_evm_pair_watcher),
+        ("bsc_pair_watcher", run_bsc_pair_watcher),
         ("triage", run_triage),
         ("coin_analyst", run_coin_analyst),
         ("digest", run_digest),

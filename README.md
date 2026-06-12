@@ -2,16 +2,17 @@
 
 24/7 agentic crypto market intelligence.
 
-> **Status: Phase B (first real signals).** On top of the Phase A spine, the
-> bot now watches Binance prices and crypto news, triages everything with
-> Claude, answers `/analyze` and `/rugcheck` over Telegram, and sends a daily
-> digest. Chain watchers, social listeners, and the ML rug detector land in
-> subsequent phases. See [`ARCHITECTURE.md`](ARCHITECTURE.md) for the full
-> design and phase plan.
+> **Status: Phase C (chain watchers).** On top of the Phase A spine and the
+> Phase B signals, the bot now watches every new token launch on Solana
+> (pump.fun always-on, Raydium via Helius), Ethereum/Base/Arbitrum (Alchemy),
+> and BSC (any WS RPC) — `chain.new_pair.*` flows onto the bus with
+> DexScreener enrichment and lands on the firehose channel. Safety screening,
+> social listeners, and the ML rug detector land in subsequent phases. See
+> [`ARCHITECTURE.md`](ARCHITECTURE.md) for the full design and phase plan.
 
 ---
 
-## What works today (Phase A + B)
+## What works today (Phase A + B + C)
 
 - Redis Streams event bus with Postgres archive
 - Postgres + TimescaleDB + pgvector via Docker
@@ -24,14 +25,28 @@
 - **`/analyze <symbol|address>` and `/rugcheck <address>`** via Telegram DM: gathers CoinGecko + DexScreener + GoPlus security data, runs a Sonnet assessment, replies in-chat
 - **Telegram inbound**: long-polling command listener (`/analyze`, `/rugcheck`, `/status`, `/help`), restricted to your configured chat IDs
 - **Daily digest** at 07:00 UTC: 24h alert/event summary written by Sonnet, delivered to Telegram DM + email (if SMTP configured)
-- CLI for ops (`migrate`, `health`, `publish`, `demo`, `events`, `alerts`, `analyze`, `news`)
+- **Pump.fun watcher** (always on, no key needed): PumpPortal WebSocket →
+  every new Solana mint on `chain.new_pair.sol`, persisted to the `tokens`
+  table; sub-threshold creator buy-ins (`PUMPFUN_MIN_INITIAL_BUY_SOL`) are
+  tier-hinted "ignore" so triage drops them
+- **Raydium watcher** (opt-in via `HELIUS_API_KEY`): logsSubscribe on the
+  Raydium AMM program, `initialize2` detection + getTransaction decode →
+  new pools with `tier_hint: medium`
+- **EVM pair watcher** (opt-in via `ALCHEMY_API_KEY`): Uniswap V2/V3 (+
+  Aerodrome on Base) factory events on Ethereum, Base, Arbitrum — one
+  resilient task per chain
+- **BSC pair watcher** (opt-in via `BSC_WS_URL`): PancakeSwap V2 factory
+- **New-pair triage**: DexScreener enrichment (liquidity/fdv/price), then a
+  quick heuristic split — liquidity ≥ $50k → medium channel, else firehose
+- CLI for ops (`migrate`, `health`, `publish`, `demo`, `events`, `alerts`, `analyze`, `news`, `tokens`)
 
 ## What does NOT work yet
 
-No chain watchers (new pairs, whales, LP events), no social listeners
-(Telegram groups, X, Reddit, Discord), no rug detector ML, no narrative
-tracker, no smart-money discovery, no web UI. They're scheduled across phases
-C–J in the architecture doc.
+No safety screening / rug detector ML (Phase D brings RugCheck/GoPlus/
+honeypot checks and real tiering), no whale/LP watchers, no social listeners
+(Telegram groups, X, Reddit, Discord), no narrative tracker, no smart-money
+discovery, no web UI. They're scheduled across phases D–J in the
+architecture doc.
 
 ---
 
@@ -147,13 +162,22 @@ cryptobot/
 ├── main.py               # process entry point
 ├── watchers/
 │   ├── prices.py         # Binance WS → price moves + volume spikes
-│   └── news.py           # CryptoPanic + RSS → news.* topics
+│   ├── news.py           # CryptoPanic + RSS → news.* topics
+│   ├── macro_news.py     # NewsAPI macro stories → news.macro.*
+│   ├── chain_common.py   # dual publish + tokens/pairs persistence helpers
+│   ├── solana/
+│   │   ├── pumpfun.py    # PumpPortal WS → every new pump.fun mint
+│   │   └── dex.py        # Helius logsSubscribe → new Raydium pools
+│   ├── evm/
+│   │   └── pairs.py      # Alchemy WS → Uniswap V2/V3 + Aerodrome pairs
+│   └── bsc.py            # PancakeSwap V2 factory over BSC_WS_URL
 ├── agents/
 │   ├── triage.py         # two-stage router: hard rules + Claude Haiku
 │   ├── coin_analyst.py   # /analyze + /rugcheck deep-dives (Sonnet)
 │   └── digest.py         # daily 07:00 UTC summary
 ├── intel/
-│   └── coin_intel.py     # CoinGecko + DexScreener + GoPlus gatherer
+│   ├── coin_intel.py     # CoinGecko + DexScreener + GoPlus gatherer
+│   └── enrich.py         # DexScreener enrichment for new pairs
 ├── reporters/
 │   ├── formatter.py      # render Event → Telegram message
 │   ├── telegram_out.py   # outbound bot, 4 channels + DM, retries
@@ -164,15 +188,16 @@ cryptobot/
 
 migrations/
 ├── 001_initial.sql       # events + alerts tables
-└── 002_phase_b.sql       # price_snapshots, news_items, analyses
+├── 002_phase_b.sql       # price_snapshots, news_items, analyses
+└── 003_phase_c.sql       # tokens, pairs
 ```
 
 ---
 
-## Next: Phase C
+## Next: Phase D
 
-Chain watchers: Helius webhooks + Pump.fun feed for Solana, Alchemy WS for
-EVM new-pair events, BSC via QuickNode — `chain.new_pair.*` flows and the
-firehose channel goes live.
+Safety + rug detection v1: `intel/safety/` adapters (RugCheck, GoPlus,
+Honeypot.is), the first rug detector with hard rules + heuristic score, and
+proper tiered alerts (strict / medium / firehose).
 
 See `ARCHITECTURE.md` §11 for the full build order.

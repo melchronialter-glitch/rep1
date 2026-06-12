@@ -41,6 +41,12 @@ class Settings(BaseSettings):
     cryptopanic_api_key: str = ""
     news_api_key: str = ""
 
+    # ---- Phase C: chain watchers ----
+    helius_api_key: str = ""
+    alchemy_api_key: str = ""
+    bsc_ws_url: str = ""  # websocket RPC, e.g. QuickNode free tier
+    pumpfun_min_initial_buy_sol: float = 1.0  # below → tier_hint "ignore"
+
     # ---- Phase B: email digests ----
     email_smtp_host: str = ""
     email_smtp_port: int = 587

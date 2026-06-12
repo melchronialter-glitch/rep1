@@ -191,6 +191,37 @@ def news(
 
 
 @app.command()
+def tokens(
+    chain: str | None = typer.Option(None, help="Filter by chain (solana, ethereum, base, arbitrum, bsc)"),
+    limit: int = typer.Option(20),
+) -> None:
+    """Show recently seen tokens collected by the chain watchers."""
+
+    async def _run():
+        if chain:
+            rows = await fetch(
+                "SELECT first_seen, chain, venue, symbol, name, address FROM tokens "
+                "WHERE chain = $1 ORDER BY first_seen DESC LIMIT $2",
+                chain,
+                limit,
+            )
+        else:
+            rows = await fetch(
+                "SELECT first_seen, chain, venue, symbol, name, address FROM tokens "
+                "ORDER BY first_seen DESC LIMIT $1",
+                limit,
+            )
+        for r in rows:
+            typer.echo(
+                f"{r['first_seen'].isoformat()}  {r['chain']:<10}  "
+                f"{(r['venue'] or '-'):<14}  {(r['symbol'] or '-'):<12}  {r['address']}"
+            )
+        await close_pool()
+
+    asyncio.run(_run())
+
+
+@app.command()
 def alerts(limit: int = typer.Option(20)) -> None:
     """Show recent alerts sent."""
 
