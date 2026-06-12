@@ -173,7 +173,5 @@ cd /opt/cryptobot && git pull && .venv/bin/pip install -e . \
   && .venv/bin/cryptobot migrate && systemctl restart cryptobot
 
 # nightly DB backup (add to crontab -e)
-0 3 * * * docker exec rep1-postgres-1 pg_dump -U cryptobot cryptobot | gzip > /root/backup_$(date +\%u).sql.gz
+0 3 * * * docker exec cryptobot-postgres pg_dump -U cryptobot cryptobot | gzip > /root/backup_$(date +\%u).sql.gz
 ```
-
-(Adjust the container name to what `docker ps` shows.)
