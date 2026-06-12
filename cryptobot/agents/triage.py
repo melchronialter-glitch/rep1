@@ -36,6 +36,8 @@ from cryptobot.topics import (
     SIGNAL_ALERT_MACRO,
     SIGNAL_ALERT_MEDIUM,
     SIGNAL_ALERT_STRICT,
+    SOCIAL_REDDIT_POST,
+    SOCIAL_X_TWEET,
 )
 
 log = get_logger(__name__)
@@ -46,6 +48,8 @@ WATCHED = [
     NEWS_MACRO_HIGH_IMPACT,
     MARKET_PRICE_MOVE,
     MARKET_VOLUME_SPIKE,
+    SOCIAL_X_TWEET,
+    SOCIAL_REDDIT_POST,
 ]
 
 NEWS_BATCH_MAX = 10
@@ -90,6 +94,11 @@ def _route_hard_rules(topic: str, event: Event) -> str | None:
         return SIGNAL_ALERT_STRICT if severity == "high" else SIGNAL_ALERT_MEDIUM
     if topic == MARKET_VOLUME_SPIKE:
         return SIGNAL_ALERT_MEDIUM
+    # Phase E: social posts go to the firehose (tg_call_parser handles TG calls
+    # more precisely; X/Reddit posts are background signal unless they carry a
+    # contract address, which the caller already flagged via persist=True).
+    if topic in (SOCIAL_X_TWEET, SOCIAL_REDDIT_POST):
+        return SIGNAL_ALERT_FIREHOSE
     return None
 
 

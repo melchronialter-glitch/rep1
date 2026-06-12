@@ -256,6 +256,79 @@ def risk(
     asyncio.run(_run())
 
 
+@app.command("tg-login")
+def tg_login() -> None:
+    """Authorize the Telegram user session interactively (run once).
+
+    Reads TELEGRAM_USER_API_ID, TELEGRAM_USER_API_HASH, and
+    TELEGRAM_USER_PHONE from the environment / .env file.  Prompts for the
+    confirmation code that Telegram sends to the phone and writes the session
+    file to TELEGRAM_SESSION_PATH.  After this the telegram_listener watcher
+    can start unattended.
+    """
+    import pathlib
+
+    from telethon.sync import TelegramClient
+
+    settings = get_settings()
+    if not settings.telegram_user_configured:
+        typer.echo(
+            "error: TELEGRAM_USER_API_ID and TELEGRAM_USER_API_HASH must be set in .env",
+            err=True,
+        )
+        raise typer.Exit(1)
+
+    session_path = pathlib.Path(settings.telegram_session_path)
+    session_path.parent.mkdir(parents=True, exist_ok=True)
+
+    with TelegramClient(
+        str(session_path),
+        int(settings.telegram_user_api_id),
+        settings.telegram_user_api_hash,
+    ) as client:
+        phone = settings.telegram_user_phone or typer.prompt("Phone number (international format)")
+        client.start(phone=phone)
+        me = client.get_me()
+        typer.echo(
+            f"Authorized as @{getattr(me, 'username', None) or getattr(me, 'phone', '?')}"
+        )
+        typer.echo(f"Session saved to {session_path}")
+
+
+@app.command()
+def calls(
+    limit: int = typer.Option(20),
+    address: str | None = typer.Option(None, help="Filter by contract address"),
+) -> None:
+    """Show recent TG calls detected by the call parser."""
+
+    async def _run():
+        if address:
+            rows = await fetch(
+                "SELECT ts, chain_guess, address, tickers, chat_title, sender_name, buy_language "
+                "FROM tg_calls WHERE address = $1 ORDER BY ts DESC LIMIT $2",
+                address,
+                limit,
+            )
+        else:
+            rows = await fetch(
+                "SELECT ts, chain_guess, address, tickers, chat_title, sender_name, buy_language "
+                "FROM tg_calls ORDER BY ts DESC LIMIT $1",
+                limit,
+            )
+        for r in rows:
+            tickers = " ".join(r["tickers"] or []) if r["tickers"] else "-"
+            bl = "buy" if r["buy_language"] else "   "
+            typer.echo(
+                f"{r['ts'].isoformat()}  {r['chain_guess'] or '-':<8}  {bl}  "
+                f"{r['address'][:16]}…  {tickers:<14}  "
+                f"{(r['chat_title'] or '-'):<20}  {r['sender_name'] or '-'}"
+            )
+        await close_pool()
+
+    asyncio.run(_run())
+
+
 @app.command()
 def alerts(limit: int = typer.Option(20)) -> None:
     """Show recent alerts sent."""

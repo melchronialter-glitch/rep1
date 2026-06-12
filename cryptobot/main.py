@@ -19,6 +19,8 @@ from collections.abc import Awaitable, Callable
 from cryptobot.agents.coin_analyst import run_coin_analyst
 from cryptobot.agents.digest import run_digest
 from cryptobot.agents.rug_detector import run_rug_detector
+from cryptobot.agents.tg_call_parser import run_tg_call_parser
+from cryptobot.agents.translator import run_translator
 from cryptobot.agents.triage import run_triage
 from cryptobot.bus import close_bus, get_bus
 from cryptobot.config import get_settings
@@ -27,12 +29,16 @@ from cryptobot.logging import get_logger
 from cryptobot.reporters.telegram_in import run_telegram_in
 from cryptobot.reporters.telegram_out import run_alert_sender
 from cryptobot.watchers.bsc import run_bsc_pair_watcher
+from cryptobot.watchers.discord_listener import run_discord_listener
 from cryptobot.watchers.evm.pairs import run_evm_pair_watcher
 from cryptobot.watchers.macro_news import run_macro_news_watcher
 from cryptobot.watchers.news import run_news_watcher
 from cryptobot.watchers.prices import run_price_watcher
+from cryptobot.watchers.reddit_listener import run_reddit_listener
 from cryptobot.watchers.solana.dex import run_solana_dex_watcher
 from cryptobot.watchers.solana.pumpfun import run_pumpfun_watcher
+from cryptobot.watchers.telegram_listener import run_telegram_listener
+from cryptobot.watchers.x import run_x_watcher
 
 log = get_logger(__name__)
 
@@ -91,6 +97,13 @@ async def amain() -> None:
         ("coin_analyst", run_coin_analyst),
         ("digest", run_digest),
         ("telegram_in", run_telegram_in),
+        # Phase E: social listeners.
+        ("telegram_listener", run_telegram_listener),
+        ("tg_call_parser", run_tg_call_parser),
+        ("x_watcher", run_x_watcher),
+        ("reddit_listener", run_reddit_listener),
+        ("discord_listener", run_discord_listener),
+        ("translator", run_translator),
     ]
     if settings.telegram_bot_token:
         runners.append(("telegram_out", run_alert_sender))
