@@ -1,0 +1,135 @@
+{% extends "base.html" %}
+{% block title %}CryptoBot — Dashboard{% endblock %}
+
+{% block content %}
+
+<!-- Stats cards -->
+<div class="grid grid-cols-2 md:grid-cols-4 gap-4 mb-8">
+  <div class="bg-gray-800 border border-gray-700 rounded-lg p-4">
+    <div class="text-gray-400 text-xs uppercase tracking-widest mb-1">24h Alerts</div>
+    <div class="text-2xl font-bold text-green-400">{{ stats.alerts_24h }}</div>
+  </div>
+  <div class="bg-gray-800 border border-gray-700 rounded-lg p-4">
+    <div class="text-gray-400 text-xs uppercase tracking-widest mb-1">24h Events</div>
+    <div class="text-2xl font-bold text-blue-400">{{ stats.events_24h }}</div>
+  </div>
+  <div class="bg-gray-800 border border-gray-700 rounded-lg p-4">
+    <div class="text-gray-400 text-xs uppercase tracking-widest mb-1">New Tokens (24h)</div>
+    <div class="text-2xl font-bold text-yellow-400">{{ stats.tokens_24h }}</div>
+  </div>
+  <div class="bg-gray-800 border border-gray-700 rounded-lg p-4">
+    <div class="text-gray-400 text-xs uppercase tracking-widest mb-1">TG Calls (24h)</div>
+    <div class="text-2xl font-bold text-purple-400">{{ stats.calls_24h }}</div>
+  </div>
+</div>
+
+<!-- Two-column layout: alerts + risk scores -->
+<div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
+
+  <!-- Alerts table (auto-refreshes every 30s via HTMX) -->
+  <div class="bg-gray-800 border border-gray-700 rounded-lg overflow-hidden">
+    <div class="flex items-center justify-between px-4 py-3 border-b border-gray-700">
+      <h2 class="text-sm font-semibold text-gray-200 uppercase tracking-widest">Recent Alerts</h2>
+      <span class="text-xs text-gray-500">auto-refresh 30s</span>
+    </div>
+    <div
+      id="alerts-table"
+      hx-get="/alerts"
+      hx-trigger="every 30s"
+      hx-swap="innerHTML"
+      class="overflow-x-auto"
+    >
+      <table class="w-full text-xs">
+        <thead>
+          <tr class="text-gray-400 border-b border-gray-700">
+            <th class="px-4 py-2 text-left">Time</th>
+            <th class="px-4 py-2 text-left">Channel</th>
+            <th class="px-4 py-2 text-left">OK</th>
+            <th class="px-4 py-2 text-left">Title</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for a in alerts %}
+          <tr class="border-b border-gray-700 hover:bg-gray-750">
+            <td class="px-4 py-2 text-gray-400 whitespace-nowrap">
+              {{ a.sent_at | string | truncate(19, True, '') if a.sent_at else '-' }}
+            </td>
+            <td class="px-4 py-2">
+              <span class="
+                px-1.5 py-0.5 rounded text-xs font-mono
+                {% if a.channel == 'strict' %}bg-red-900 text-red-300
+                {% elif a.channel == 'medium' %}bg-yellow-900 text-yellow-300
+                {% elif a.channel == 'dm' %}bg-blue-900 text-blue-300
+                {% else %}bg-gray-700 text-gray-300{% endif %}
+              ">{{ a.channel or '-' }}</span>
+            </td>
+            <td class="px-4 py-2">
+              {% if a.delivered %}
+              <span class="text-green-400">&#10003;</span>
+              {% else %}
+              <span class="text-red-400">&#10007;</span>
+              {% endif %}
+            </td>
+            <td class="px-4 py-2 text-gray-200 max-w-xs truncate" title="{{ a.title or '' }}">
+              {{ a.title or '-' }}
+            </td>
+          </tr>
+          {% else %}
+          <tr>
+            <td colspan="4" class="px-4 py-6 text-center text-gray-500">No alerts yet</td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <!-- Risk scores -->
+  <div class="bg-gray-800 border border-gray-700 rounded-lg overflow-hidden">
+    <div class="flex items-center justify-between px-4 py-3 border-b border-gray-700">
+      <h2 class="text-sm font-semibold text-gray-200 uppercase tracking-widest">Recent Risk Scores</h2>
+      <a href="/risk-page" class="text-xs text-green-400 hover:underline">view all →</a>
+    </div>
+    <div class="overflow-x-auto">
+      <table class="w-full text-xs">
+        <thead>
+          <tr class="text-gray-400 border-b border-gray-700">
+            <th class="px-4 py-2 text-left">Score</th>
+            <th class="px-4 py-2 text-left">Chain</th>
+            <th class="px-4 py-2 text-left">Address</th>
+            <th class="px-4 py-2 text-left">Liquidity</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for r in risk_scores %}
+          <tr class="border-b border-gray-700 hover:bg-gray-750">
+            <td class="px-4 py-2">
+              <span class="
+                font-bold
+                {% if r.score is not none and r.score >= 70 %}text-red-400
+                {% elif r.score is not none and r.score >= 50 %}text-yellow-400
+                {% else %}text-green-400{% endif %}
+              ">{{ r.score if r.score is not none else '-' }}</span>
+            </td>
+            <td class="px-4 py-2 text-gray-300">{{ r.chain or '-' }}</td>
+            <td class="px-4 py-2 text-gray-400 font-mono" title="{{ r.address or '' }}">
+              {{ (r.address or '-')[:16] }}…
+            </td>
+            <td class="px-4 py-2 text-gray-300">
+              {% if r.liquidity_usd is not none %}
+              ${{ "{:,.0f}".format(r.liquidity_usd | float) }}
+              {% else %}-{% endif %}
+            </td>
+          </tr>
+          {% else %}
+          <tr>
+            <td colspan="4" class="px-4 py-6 text-center text-gray-500">No risk scores yet</td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+</div>
+{% endblock %}

@@ -347,5 +347,19 @@ def alerts(limit: int = typer.Option(20)) -> None:
     asyncio.run(_run())
 
 
+@app.command()
+def web(
+    host: str = typer.Option("0.0.0.0", help="Bind host"),
+    port: int = typer.Option(8080, help="Bind port"),
+    reload: bool = typer.Option(False, help="Enable auto-reload (dev only)"),
+) -> None:
+    """Start the CryptoBot web UI."""
+    import uvicorn
+    from cryptobot.web.app import create_app
+
+    app_instance = create_app()
+    uvicorn.run(app_instance, host=host, port=port, reload=reload)
+
+
 if __name__ == "__main__":
     app()

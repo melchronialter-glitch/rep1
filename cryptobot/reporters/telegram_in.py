@@ -10,6 +10,8 @@ Commands:
 - ``/rugcheck <address>``       → publish ``intel.user_query`` (type rugcheck)
 - ``/status``                   → reply with 24h event/alert counts
 - ``/help``                     → static usage text
+- ``/rug <address>``            → label coin as rug, trigger forensic analysis
+- ``/notrug <address>``         → label coin as not-a-rug
 
 Analyze/rugcheck get an immediate "working on it…" ack; the coin analyst
 agent replies asynchronously via ``signal.alert.dm`` with ``reply_to_chat_id``.
@@ -24,9 +26,10 @@ import httpx
 
 from cryptobot.bus import get_bus
 from cryptobot.config import get_settings
-from cryptobot.db import fetch, fetchrow
+from cryptobot.db import execute, fetch, fetchrow
+from cryptobot.intel.coin_intel import looks_like_evm_address, looks_like_solana_address
 from cryptobot.logging import get_logger
-from cryptobot.topics import INTEL_USER_QUERY
+from cryptobot.topics import INTEL_RUG_LABEL, INTEL_USER_QUERY
 
 log = get_logger(__name__)
 
@@ -38,6 +41,8 @@ HELP_TEXT = (
     "CryptoBot commands:\n"
     "/analyze <symbol|address> — full coin deep-dive\n"
     "/rugcheck <address> — token safety report\n"
+    "/rug <address> — label coin as a rug pull\n"
+    "/notrug <address> — label coin as not a rug pull\n"
     "/status — 24h event and alert counts\n"
     "/help — this text"
 )
@@ -79,6 +84,57 @@ async def _status_text() -> str:
     return "\n".join(lines)
 
 
+def _looks_like_address(arg: str) -> bool:
+    """Return True if arg resembles an EVM or Solana contract address."""
+    return looks_like_evm_address(arg) or looks_like_solana_address(arg)
+
+
+async def _handle_rug_label(
+    client: httpx.AsyncClient,
+    chat_id: str,
+    address: str,
+    label: str,
+) -> None:
+    """Persist a rug/notrug label and publish intel.rug_label."""
+    bus = get_bus()
+
+    if label == "rug":
+        ack_text = f"Labeled as rug ✓, running forensic analysis… ({address})"
+    else:
+        ack_text = f"Labeled as not-rug ✓ ({address})"
+
+    await _reply(client, chat_id, ack_text)
+
+    try:
+        await execute(
+            """
+            INSERT INTO rug_labels (address, chain, label, labeled_by)
+            VALUES ($1, NULL, $2, $3)
+            ON CONFLICT (address, label) DO NOTHING
+            """,
+            address,
+            label,
+            chat_id,
+        )
+    except Exception:
+        log.exception("tg_in.rug_label.db_failed", address=address, label=label)
+
+    try:
+        await bus.publish(
+            INTEL_RUG_LABEL,
+            {
+                "address": address,
+                "chain_guess": None,
+                "label": label,
+                "labeled_by": chat_id,
+            },
+            source="telegram_in",
+        )
+        log.info("tg_in.rug_label_published", address=address, label=label, chat_id=chat_id)
+    except Exception:
+        log.exception("tg_in.rug_label.publish_failed", address=address)
+
+
 async def _handle_command(
     client: httpx.AsyncClient, chat_id: str, text: str
 ) -> None:
@@ -103,6 +159,15 @@ async def _handle_command(
             source="telegram_in",
         )
         log.info("tg_in.query_published", type=query_type, query=arg, chat_id=chat_id)
+    elif cmd in ("/rug", "/notrug"):
+        if not arg:
+            await _reply(client, chat_id, f"usage: {cmd} <address>")
+            return
+        if not _looks_like_address(arg):
+            await _reply(client, chat_id, f"invalid address: {arg!r}")
+            return
+        label = "rug" if cmd == "/rug" else "notrug"
+        await _handle_rug_label(client, chat_id, arg, label)
     else:
         log.debug("tg_in.unknown_command", cmd=cmd)
 

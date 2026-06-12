@@ -1,0 +1,39 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>{% block title %}CryptoBot{% endblock %}</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://unpkg.com/htmx.org@1.9.10"></script>
+  <style>
+    body { font-family: 'Courier New', Courier, monospace; }
+  </style>
+</head>
+<body class="bg-gray-900 text-gray-100 min-h-screen">
+
+  <!-- Navigation -->
+  <nav class="bg-gray-800 border-b border-gray-700 px-6 py-3 flex items-center gap-6">
+    <span class="text-green-400 font-bold text-lg tracking-widest">CRYPTOBOT</span>
+    <a href="/" class="text-gray-300 hover:text-green-400 transition-colors text-sm">Dashboard</a>
+    <a href="/risk-page" class="text-gray-300 hover:text-green-400 transition-colors text-sm">Risk Scores</a>
+    <a href="/health" class="text-gray-300 hover:text-green-400 transition-colors text-sm" target="_blank">Health</a>
+    <div class="ml-auto text-gray-500 text-xs" id="clock"></div>
+  </nav>
+
+  <!-- Main content -->
+  <main class="px-6 py-6 max-w-screen-xl mx-auto">
+    {% block content %}{% endblock %}
+  </main>
+
+  <script>
+    // Live clock
+    function tick() {
+      document.getElementById('clock').textContent = new Date().toUTCString();
+    }
+    tick();
+    setInterval(tick, 1000);
+  </script>
+
+</body>
+</html>

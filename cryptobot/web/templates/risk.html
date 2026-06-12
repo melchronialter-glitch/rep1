@@ -1,0 +1,111 @@
+{% extends "base.html" %}
+{% block title %}CryptoBot — Risk Scores{% endblock %}
+
+{% block content %}
+
+<div class="mb-6 flex items-center gap-4">
+  <h1 class="text-xl font-bold text-gray-100 uppercase tracking-widest">Risk Scores</h1>
+  <!-- Filter controls (client-side via HTMX) -->
+  <div class="ml-auto flex gap-3 text-xs">
+    <label class="text-gray-400">
+      Chain:
+      <select id="chain-filter"
+              class="bg-gray-700 border border-gray-600 rounded px-2 py-1 text-gray-200 ml-1"
+              hx-get="/risk-page"
+              hx-trigger="change"
+              hx-target="body"
+              hx-push-url="true">
+        <option value="">All</option>
+        <option value="solana">Solana</option>
+        <option value="ethereum">Ethereum</option>
+        <option value="base">Base</option>
+        <option value="arbitrum">Arbitrum</option>
+        <option value="bsc">BSC</option>
+      </select>
+    </label>
+    <label class="text-gray-400">
+      Min Score:
+      <input id="min-score-filter"
+             type="number" min="0" max="100" value="0"
+             class="bg-gray-700 border border-gray-600 rounded px-2 py-1 text-gray-200 w-16 ml-1"
+             hx-get="/risk-page"
+             hx-trigger="change"
+             hx-target="body"
+             hx-push-url="true" />
+    </label>
+  </div>
+</div>
+
+<div class="bg-gray-800 border border-gray-700 rounded-lg overflow-hidden">
+  <div class="overflow-x-auto">
+    <table class="w-full text-xs">
+      <thead>
+        <tr class="text-gray-400 border-b border-gray-700 bg-gray-750">
+          <th class="px-4 py-3 text-left">Time</th>
+          <th class="px-4 py-3 text-left">Score</th>
+          <th class="px-4 py-3 text-left">Chain</th>
+          <th class="px-4 py-3 text-left">Address</th>
+          <th class="px-4 py-3 text-left">Routed To</th>
+          <th class="px-4 py-3 text-left">Liquidity</th>
+          <th class="px-4 py-3 text-left">Flags</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for r in risk_scores %}
+        {% set score = r.score if r.score is not none else 0 %}
+        <tr class="border-b border-gray-700 hover:bg-gray-700 transition-colors">
+          <td class="px-4 py-2 text-gray-400 whitespace-nowrap">
+            {{ r.ts | string | truncate(19, True, '') if r.ts else '-' }}
+          </td>
+          <td class="px-4 py-2">
+            <span class="
+              inline-block px-2 py-0.5 rounded font-bold text-sm
+              {% if score >= 70 %}bg-red-900 text-red-300
+              {% elif score >= 50 %}bg-yellow-900 text-yellow-300
+              {% elif score >= 30 %}bg-orange-900 text-orange-300
+              {% else %}bg-green-900 text-green-300{% endif %}
+            ">{{ r.score if r.score is not none else '-' }}</span>
+          </td>
+          <td class="px-4 py-2 text-gray-300 uppercase text-xs">{{ r.chain or '-' }}</td>
+          <td class="px-4 py-2 font-mono text-gray-300" title="{{ r.address or '' }}">
+            <span class="text-gray-500">{{ (r.address or '-')[:8] }}</span>{{ (r.address or '')[-8:] if r.address else '' }}
+          </td>
+          <td class="px-4 py-2 text-gray-400">
+            {% if r.routed_to %}
+            {{ r.routed_to.split('.')[-1] }}
+            {% else %}-{% endif %}
+          </td>
+          <td class="px-4 py-2 text-gray-300">
+            {% if r.liquidity_usd is not none %}
+            ${{ "{:,.0f}".format(r.liquidity_usd | float) }}
+            {% else %}-{% endif %}
+          </td>
+          <td class="px-4 py-2 text-gray-400 max-w-xs">
+            {% if r.reasons %}
+            {% set reasons = r.reasons if r.reasons is iterable and r.reasons is not string else [] %}
+            <span title="{{ reasons | join(', ') }}">
+              {{ reasons[:3] | join(', ') }}{% if reasons | length > 3 %} +{{ reasons | length - 3 }}{% endif %}
+            </span>
+            {% else %}-{% endif %}
+          </td>
+        </tr>
+        {% else %}
+        <tr>
+          <td colspan="7" class="px-4 py-10 text-center text-gray-500">No risk scores found</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+
+<!-- Legend -->
+<div class="mt-4 flex gap-4 text-xs text-gray-500">
+  <span>Score legend:</span>
+  <span class="text-red-400 font-semibold">■ ≥70 High risk</span>
+  <span class="text-yellow-400 font-semibold">■ 50–69 Medium</span>
+  <span class="text-orange-400 font-semibold">■ 30–49 Low-medium</span>
+  <span class="text-green-400 font-semibold">■ &lt;30 Low</span>
+</div>
+
+{% endblock %}
