@@ -154,14 +154,12 @@ async def run_x_watcher(stop_event: asyncio.Event | None = None) -> None:
                 break
             await _poll_handle(adapter, handle)
 
-        try:
-            await asyncio.wait_for(
-                asyncio.shield(stop_event.wait()) if stop_event else asyncio.sleep(poll_interval),
-                timeout=float(poll_interval),
-            )
-        except TimeoutError:
-            pass
-        except asyncio.CancelledError:
-            raise
+        if stop_event:
+            try:
+                await asyncio.wait_for(stop_event.wait(), timeout=float(poll_interval))
+            except TimeoutError:
+                pass
+        else:
+            await asyncio.sleep(poll_interval)
 
     log.info("x_watcher.stopped")

@@ -2,17 +2,18 @@
 
 24/7 agentic crypto market intelligence.
 
-> **Status: Phase D (safety + rug detection v1).** Every new pair now gets a
-> deterministic safety screen (GoPlus + Honeypot.is on EVM, RugCheck on
-> Solana) and a hard-rule 0–100 risk score before being routed to the
-> strict/medium/firehose tiers. Scores are persisted to `risk_scores` as the
-> future ML training set. The ML classifier itself, social listeners and the
-> learning loop land in later phases. See
+> **Status: Phase E (social listeners).** On top of the Phase D safety
+> screen + rug detector, the bot now listens to Telegram groups (as your
+> user account via Telethon), X/Twitter (Apify or TwitterAPI.io adapters),
+> and Reddit; detects coin calls (contract address + buy-language/$TICKER)
+> with per-caller history; and translates ZH/KO/RU/JA posts to English via
+> Claude Haiku. The ML classifier, smart-money discovery, narrative tracker
+> and the learning loop land in later phases. See
 > [`ARCHITECTURE.md`](ARCHITECTURE.md) for the full design and phase plan.
 
 ---
 
-## What works today (Phase A + B + C + D)
+## What works today (Phase A + B + C + D + E)
 
 - Redis Streams event bus with Postgres archive
 - Postgres + TimescaleDB + pgvector via Docker
@@ -51,7 +52,23 @@
   safety report — the Phase H ML training set
 - **Richer `/rugcheck`**: the full safety fan-out plus the deterministic
   score is handed to Claude, which anchors its 1–10 rating on it
-- CLI for ops (`migrate`, `health`, `publish`, `demo`, `events`, `alerts`, `analyze`, `news`, `tokens`, `risk`)
+- **Telegram group listener** (opt-in via `TELEGRAM_USER_API_ID/HASH` +
+  one-time `cryptobot tg-login`): Telethon user-account session listens to
+  your groups (`TG_WATCH_CHATS` to narrow, empty = all); messages with a
+  contract address are archived to `tg_messages`
+- **TG call parser**: address + buy-language ("ape", "100x", "send it", …)
+  or `$TICKER` = a call → persisted to `tg_calls`, caller history upserted
+  in `tg_callers`, routed to medium (watched group) or firehose
+- **X watcher** (opt-in via `APIFY_API_TOKEN` or `TWITTERAPI_IO_KEY`):
+  polls `X_WATCH_HANDLES` every 2 min; tweets with an address/$ticker are
+  archived to `tweets`
+- **Reddit listener** (always on, no key): public JSON API on
+  `REDDIT_SUBREDDITS`; signal posts archived to `reddit_posts`
+- **Translator agent**: CJK / Hangul / Cyrillic detection → Claude Haiku
+  translation back onto the same topic with a loop-guard flag
+- **Discord**: intentionally a stub — selfbots violate Discord ToS; needs a
+  verified bot application (revisited in a later phase)
+- CLI for ops (`migrate`, `health`, `publish`, `demo`, `events`, `alerts`, `analyze`, `news`, `tokens`, `risk`, `calls`, `tg-login`)
 
 ## What does NOT work yet
 
@@ -60,10 +77,14 @@ in Phase H once `risk_scores` has labeled data). Pump.fun mints get no real
 safety screen (the APIs don't index them that early), so they're scored
 "unscreened" rather than actually checked. RugCheck/Honeypot.is are free
 public endpoints with no SLA — when they're down the score silently degrades
-to the remaining sources (+10 "unscreened" if nothing answers). No LP-lock
-checks, no whale/LP watchers, no social listeners (Telegram groups, X,
-Reddit, Discord), no narrative tracker, no smart-money discovery, no web UI.
-They're scheduled across phases E–J in the architecture doc.
+to the remaining sources (+10 "unscreened" if nothing answers). Caller
+scoring is raw call volume only — "did their calls actually pump?"
+performance scoring is a later phase. No technical-indicator engine
+(RSI/MACD buy/sell signals), no launch radar (presales/vesting/unlocks), no
+LP-lock checks, no whale/LP watchers, no Discord listener (ToS), no
+narrative tracker, no smart-money discovery, no derivatives/orderbook/
+sentiment-index watchers, no learning loop, no web UI. They're scheduled
+across phases F–J in the architecture doc.
 
 ---
 
