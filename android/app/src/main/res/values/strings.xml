@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">Aster RosyTalk Bridge</string>
+    <string name="accessibility_service_label">RosyTalk conversation bridge</string>
+    <string name="accessibility_service_description">Reads the visible chat surface and submits text only inside the one app you explicitly select. Message submission is disabled until you enable it for the next 15 minutes.</string>
+</resources>
