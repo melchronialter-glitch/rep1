@@ -38,7 +38,10 @@ composer. No send action was attempted, but a compatible composer could never co
 ## Verification
 
 - TypeScript check/build and all relay tests pass locally.
-- Android unit tests and `assembleDebug` must pass in GitHub Actions before the APK is treated as
-  installable.
+- Android unit tests and `assembleDebug` pass in
+  [GitHub Actions run 31833534133](https://github.com/melchronialter-glitch/rep1/actions/runs/31833534133)
+  for commit `4cb42c34088eaaf27ec1d8be3c3bc9a8136d6251`.
+- The downloaded artifact manifest matches the verified debug APK SHA-256:
+  `0c73382fc23f3ed049d0572e743ba9ab4dc1b9f7b685426e6087c31b97d823e8`.
 - Physical-phone acceptance still requires a fresh visible read, an exact-text `ime_enter` action,
   and a newer visible response. A successful local UI action is not proof of remote delivery.
