@@ -388,7 +388,7 @@ class BridgeClient(
             appContext.packageManager.getPackageInfo(appContext.packageName, 0).versionName
         } catch (_: Exception) {
             null
-        } ?: "0.4.0"
+        } ?: "0.4.1"
         val androidVersion = Build.VERSION.RELEASE?.takeIf { it.isNotBlank() }
             ?: Build.VERSION.SDK_INT.toString()
         val targetPackage = BridgePreferences.targetPackage(appContext)

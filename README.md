@@ -28,7 +28,9 @@ The bridge does not export a complete thread, prove who authored visible text, r
 5. Verify read-only operation before temporarily enabling submission.
 6. If connecting ChatGPT, follow [Connect ChatGPT](docs/CONNECT_CHATGPT.md), review the [threat model](docs/THREAT_MODEL.md), then use the ordered [first-conversation commissioning runbook](docs/COMMISSION_FIRST_CONVERSATION.md).
 
-The exact verification boundary for this source release is recorded in [v0.4 release notes](docs/RELEASE_v0.4.md).
+The physical-phone compatibility patch and its verification boundary are recorded in
+[v0.4.1 release notes](docs/RELEASE_v0.4.1.md). The prior source release remains documented in
+[v0.4 release notes](docs/RELEASE_v0.4.md).
 
 ## Safety invariants
 

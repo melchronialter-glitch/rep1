@@ -79,9 +79,18 @@ class RosyTalkAccessibilityService : AccessibilityService() {
             throw BridgeException("TARGET_NOT_FOREGROUND", "Open the selected RosyTalk conversation first")
         }
 
-        collectNodes(root, snapshotNodes, 0, isRoot = true)
+        if (collectNodes(root, snapshotNodes, 0, isRoot = true)) {
+            throw BridgeException(
+                "NOT_CHAT_SURFACE",
+                "The target accessibility tree is truncated; uniqueness cannot be established",
+            )
+        }
         identifyChatSurface(root, snapshotNodes)
-        val candidates = snapshotNodes.mapNotNull(::visibleTextCandidate)
+        val candidates = snapshotNodes
+            .asSequence()
+            .filter { it.packageName?.toString() == targetPackage }
+            .mapNotNull(::visibleTextCandidate)
+            .toList()
         val screenWidth = resources.displayMetrics.widthPixels.coerceAtLeast(1)
         val deduplicated = LinkedHashMap<String, TextCandidate>()
         candidates
@@ -283,7 +292,12 @@ class RosyTalkAccessibilityService : AccessibilityService() {
             if (actionRoot.packageName?.toString() != targetPackage) {
                 throw BridgeException("TARGET_NOT_FOREGROUND", "Open the selected RosyTalk conversation first")
             }
-            collectNodes(actionRoot, actionNodes, 0, isRoot = true)
+            if (collectNodes(actionRoot, actionNodes, 0, isRoot = true)) {
+                throw BridgeException(
+                    "NOT_CHAT_SURFACE",
+                    "The target accessibility tree is truncated; uniqueness cannot be established",
+                )
+            }
             val surface = identifyChatSurface(actionRoot, actionNodes)
             if (privateWindowStateSignature(targetPackage, actionRoot, actionNodes) != lastSignature) {
                 throw BridgeException(
@@ -323,7 +337,12 @@ class RosyTalkAccessibilityService : AccessibilityService() {
                             "The selected app left the foreground after text entry",
                         )
                     }
-                    collectNodes(updatedRoot, updatedNodes, 0, isRoot = true)
+                    if (collectNodes(updatedRoot, updatedNodes, 0, isRoot = true)) {
+                        throw BridgeException(
+                            "SUBMIT_FAILED",
+                            "The target accessibility tree became truncated after text entry",
+                        )
+                    }
                     val updatedSurface = identifyChatSurface(updatedRoot, updatedNodes)
                     if (surfaceIdentity(updatedRoot, updatedNodes, updatedSurface) != expectedSurfaceIdentity) {
                         throw BridgeException(
@@ -440,7 +459,12 @@ class RosyTalkAccessibilityService : AccessibilityService() {
         val childCount = rawChildCount.coerceAtMost(MAX_CHILDREN_PER_NODE)
         var truncated = rawChildCount > childCount
         for (index in 0 until childCount) {
-            node.getChild(index)?.let { child ->
+            val child = node.getChild(index)
+            if (child == null) {
+                // Android may expose a child count whose node has already gone stale. Unseen
+                // descendants could contain another composer or action, so uniqueness is unknown.
+                truncated = true
+            } else {
                 if (collectNodes(child, output, depth + 1)) truncated = true
             }
             if (output.size >= MAX_TREE_NODES) {
@@ -532,17 +556,23 @@ class RosyTalkAccessibilityService : AccessibilityService() {
         nodes: List<AccessibilityNodeInfo>,
     ): ChatSurfaceAnalysis {
         val rootBounds = nodeBounds(root)
+        val rootPackage = root.packageName?.toString()
         val effectiveHeight = rootBounds.height().takeIf { it > 0 } ?: resources.displayMetrics.heightPixels
         val effectiveWidth = rootBounds.width().takeIf { it > 0 } ?: resources.displayMetrics.widthPixels
         val bottomThreshold = rootBounds.top + (effectiveHeight * 0.55).toInt()
-        val composers = nodes.filter { node ->
+        val visibleEnabledEditables = nodes.filter { node ->
             if (!node.isVisibleToUser || !node.isEnabled || !node.isEditable) return@filter false
+            !nodeBounds(node).isEmpty()
+        }
+        val composers = visibleEnabledEditables.filter { node ->
+            if (node.packageName?.toString() != rootPackage) return@filter false
             val bounds = nodeBounds(node)
-            !bounds.isEmpty() && bounds.centerY() >= bottomThreshold &&
+            bounds.centerY() >= bottomThreshold &&
                 bounds.width() >= (effectiveWidth * MIN_COMPOSER_WIDTH_RATIO).toInt()
         }
         val sendControlCandidates = nodes.filter { node ->
-            node.isVisibleToUser && looksLikeSendControl(node)
+            node.packageName?.toString() == rootPackage &&
+                node.isVisibleToUser && looksLikeSendControl(node)
         }
         if (composers.size != 1) {
             return ChatSurfaceAnalysis(
@@ -584,26 +614,45 @@ class RosyTalkAccessibilityService : AccessibilityService() {
 
         val hasConversationContext = nodes.any { node ->
             if (node === composer || node.isEditable || looksLikeSendControl(node)) return@any false
+            if (node.packageName?.toString() != rootPackage) return@any false
             val text = node.text?.toString()?.trim().orEmpty()
                 .ifBlank { node.contentDescription?.toString()?.trim().orEmpty() }
             val bounds = nodeBounds(node)
             text.isNotBlank() && bounds.bottom <= composerBounds.top
         }
-        val failureStage = when {
-            adjacentSendControls.size > 1 -> SurfaceFailureStage.SEND_CONTROL_AMBIGUOUS
-            adjacentSendControls.isEmpty() && !composerIsMessageLike ->
-                SurfaceFailureStage.MESSAGE_COMPOSER_SIGNAL_MISSING
-            adjacentSendControls.isEmpty() && exposedImeSend == null ->
-                SurfaceFailureStage.IME_SEND_ACTION_MISSING
-            !hasConversationContext -> SurfaceFailureStage.CONVERSATION_CONTEXT_MISSING
-            else -> SurfaceFailureStage.READY
+        val supportsSetText = composer.actionList.any {
+            it.id == AccessibilityNodeInfo.ACTION_SET_TEXT
         }
+        val exactRosyTalkImeComposer = ChatSurfacePolicy.isExactRosyTalkImeComposer(
+            ChatSurfacePolicy.RosyTalkImeEvidence(
+                rootPackage = rootPackage,
+                composerPackage = composer.packageName?.toString(),
+                composerClassName = composer.className?.toString(),
+                visibleEnabledEditableCount = visibleEnabledEditables.size,
+                composerIsPassword = composer.isPassword,
+                supportsSetText = supportsSetText,
+                supportsImeEnter = exposedImeSend != null,
+                hasConversationContext = hasConversationContext,
+                rootBounds = rootBounds.toPolicyBounds(),
+                composerBounds = composerBounds.toPolicyBounds(),
+            ),
+        )
+        val composerHasMessageSignal = composerIsMessageLike || exactRosyTalkImeComposer
+        val failureStage = ChatSurfacePolicy.failureStage(
+            ChatSurfacePolicy.DecisionInput(
+                composerCandidateCount = composers.size,
+                adjacentSendControlCount = adjacentSendControls.size,
+                composerHasMessageSignal = composerHasMessageSignal,
+                composerHasImeSendAction = exposedImeSend != null,
+                hasConversationContext = hasConversationContext,
+            ),
+        )
 
         return ChatSurfaceAnalysis(
             composerCandidates = composers,
             sendControlCandidates = sendControlCandidates,
             adjacentSendControls = adjacentSendControls,
-            composerHasMessageSignal = composerIsMessageLike,
+            composerHasMessageSignal = composerHasMessageSignal,
             composerHasImeSendAction = exposedImeSend != null,
             hasConversationContext = hasConversationContext,
             imeActionId = if (adjacentSendControls.isEmpty()) exposedImeSend else null,
@@ -630,6 +679,13 @@ class RosyTalkAccessibilityService : AccessibilityService() {
         }
         return horizontalGap <= (windowWidth * MAX_SEND_GAP_RATIO).toInt()
     }
+
+    private fun Rect.toPolicyBounds(): ChatSurfacePolicy.Bounds = ChatSurfacePolicy.Bounds(
+        left = left,
+        top = top,
+        right = right,
+        bottom = bottom,
+    )
 
     private fun privateWindowStateSignature(
         targetPackage: String,
@@ -740,7 +796,7 @@ class RosyTalkAccessibilityService : AccessibilityService() {
         val nodes = ArrayList<AccessibilityNodeInfo>()
         try {
             if (root.packageName?.toString() != targetPackage) return false
-            collectNodes(root, nodes, 0, isRoot = true)
+            if (collectNodes(root, nodes, 0, isRoot = true)) return false
             val currentSurface = try {
                 identifyChatSurface(root, nodes)
             } catch (_: BridgeException) {
