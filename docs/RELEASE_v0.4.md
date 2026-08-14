@@ -39,13 +39,14 @@
 - The mock commissioning path exercises all eight tools, revisions `1 → 2 → 3`, an exact-bound
   submission, stale refusal, an explicit Room state, the metadata-only diagnostic boundary, and
   the no-message-bodies/no-expression-captions lineage invariant.
+- Android unit tests and `assembleDebug` pass in
+  [GitHub Actions run 31809268315](https://github.com/melchronialter-glitch/rep1/actions/runs/31809268315).
+  The published debug APK has SHA-256
+  `29d4b2cc257af82eaa4f50b519c69d597d22b5e5a7c4e4166f10289bd56bb652`.
 - Diff whitespace validation passes.
 
-## Requires CI, real hardware, or external infrastructure
+## Requires real hardware or external infrastructure
 
-- This environment cannot download the uncached Gradle 9.3.1 distribution. GitHub Actions is
-  configured to run the new Android unit tests before `assembleDebug`; the v0.4 APK must not be
-  claimed until that workflow passes and publishes its SHA-256 artifact.
 - The PowerShell launchers were reviewed statically because PowerShell is unavailable here.
 - Accessibility recognition and submit behavior still require commissioning against the exact
   installed RosyTalk version and selected package.

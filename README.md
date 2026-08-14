@@ -15,8 +15,8 @@ The bridge does not export a complete thread, prove who authored visible text, r
 
 - Relay TypeScript check, build, and automated tests pass.
 - `npm run commission:mock` exercises an actual authenticated MCP roundtrip through all eight v0.4 tools, a reply update, stale-submit refusal, explicit Room state, metadata-only surface diagnostics, and the no-message-bodies/no-expression-captions lineage invariant.
-- Android source is included and statically reviewed. Build it with Android Studio or the documented Gradle/JDK/SDK versions.
-- No prebuilt APK is claimed in this source package unless a file is explicitly present under `release/`.
+- Android unit tests and `assembleDebug` pass in [GitHub Actions run 31809268315](https://github.com/melchronialter-glitch/rep1/actions/runs/31809268315). The verified v0.4 debug APK SHA-256 is `29d4b2cc257af82eaa4f50b519c69d597d22b5e5a7c4e4166f10289bd56bb652`.
+- The verified APK is published as that workflow run's artifact; no prebuilt binary is tracked in this source package unless a file is explicitly present under `release/`.
 - PowerShell launchers were statically reviewed; this Linux build environment did not contain PowerShell for an execution test.
 
 ## Start here
