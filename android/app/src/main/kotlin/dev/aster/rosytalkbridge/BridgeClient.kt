@@ -336,31 +336,45 @@ class BridgeClient(
         }
 
         mainHandler.post {
+            var completesAsynchronously = false
             try {
                 if (!isGenerationActive(generation)) return@post
-                val result = when (parsed) {
-                    PendingOperation.SurfaceDiagnostic -> requireAccessibilityService()
-                        .captureSurfaceDiagnostic()
-                        .toJson()
-                    is PendingOperation.Expression -> BridgeRuntime.applyRemoteRoomExpression(
-                        expression = parsed.expression,
-                        caption = parsed.caption,
-                        authoredAt = parsed.authoredAt,
-                        authoredEventId = parsed.authoredEventId,
-                    ).toJson()
-                    is PendingOperation.Snapshot -> requireAccessibilityService()
-                        .captureSnapshot(parsed.maxItems)
-                        .also(BridgeRuntime::mirrorSnapshot)
-                        .toJson()
-                    is PendingOperation.Submit -> requireAccessibilityService()
-                        .submitText(
-                            parsed.text,
-                            parsed.expectedRevision,
-                            parsed.expectedSnapshotId,
+                if (parsed is PendingOperation.Submit) {
+                    requireAccessibilityService().submitText(
+                        parsed.text,
+                        parsed.expectedRevision,
+                        parsed.expectedSnapshotId,
+                        requestIsActive = { isGenerationActive(generation) },
+                    ) { outcome ->
+                        completeSubmitRequest(
+                            socket = socket,
+                            generation = generation,
+                            id = id,
+                            loggedMethod = loggedMethod,
+                            outcome = outcome,
+                        )
+                    }
+                    completesAsynchronously = true
+                } else {
+                    val result = when (parsed) {
+                        PendingOperation.SurfaceDiagnostic -> requireAccessibilityService()
+                            .captureSurfaceDiagnostic()
+                            .toJson()
+                        is PendingOperation.Expression -> BridgeRuntime.applyRemoteRoomExpression(
+                            expression = parsed.expression,
+                            caption = parsed.caption,
+                            authoredAt = parsed.authoredAt,
+                            authoredEventId = parsed.authoredEventId,
                         ).toJson()
-                }
-                if (sendIfCurrent(socket, generation, successResponse(id, result))) {
-                    listener.onActivity("Completed $loggedMethod")
+                        is PendingOperation.Snapshot -> requireAccessibilityService()
+                            .captureSnapshot(parsed.maxItems)
+                            .also(BridgeRuntime::mirrorSnapshot)
+                            .toJson()
+                        is PendingOperation.Submit -> error("Submission handled asynchronously")
+                    }
+                    if (sendIfCurrent(socket, generation, successResponse(id, result))) {
+                        listener.onActivity("Completed $loggedMethod")
+                    }
                 }
             } catch (error: BridgeException) {
                 sendIfCurrent(socket, generation, errorResponse(id, error.code, error.message))
@@ -373,8 +387,45 @@ class BridgeClient(
                 )
                 listener.onActivity("Failed $loggedMethod (INTERNAL_ERROR)")
             } finally {
-                pendingRequests.decrementAndGet()
+                if (!completesAsynchronously) pendingRequests.decrementAndGet()
             }
+        }
+    }
+
+    private fun completeSubmitRequest(
+        socket: WebSocket,
+        generation: Long,
+        id: String,
+        loggedMethod: String,
+        outcome: Result<SubmitResult>,
+    ) {
+        check(Looper.myLooper() == Looper.getMainLooper()) {
+            "Submission completion must run on the main thread"
+        }
+        try {
+            val result = outcome.getOrNull()
+            if (result != null) {
+                if (sendIfCurrent(socket, generation, successResponse(id, result.toJson()))) {
+                    listener.onActivity("Completed $loggedMethod")
+                }
+                return
+            }
+            val error = outcome.exceptionOrNull()
+            val response = if (error is BridgeException) {
+                errorResponse(id, error.code, error.message)
+            } else {
+                errorResponse(
+                    id,
+                    "INTERNAL_ERROR",
+                    "The phone could not complete the chat request",
+                )
+            }
+            if (sendIfCurrent(socket, generation, response)) {
+                val code = if (error is BridgeException) error.code else "INTERNAL_ERROR"
+                listener.onActivity("Rejected $loggedMethod ($code)")
+            }
+        } finally {
+            pendingRequests.decrementAndGet()
         }
     }
 
@@ -388,7 +439,7 @@ class BridgeClient(
             appContext.packageManager.getPackageInfo(appContext.packageName, 0).versionName
         } catch (_: Exception) {
             null
-        } ?: "0.4.2"
+        } ?: "0.4.3"
         val androidVersion = Build.VERSION.RELEASE?.takeIf { it.isNotBlank() }
             ?: Build.VERSION.SDK_INT.toString()
         val targetPackage = BridgePreferences.targetPackage(appContext)

@@ -14,7 +14,7 @@ const envSchema = z.object({
     .enum(["true", "false"])
     .default("false")
     .transform((value) => value === "true"),
-  REQUEST_TIMEOUT_MS: z.coerce.number().int().min(1000).max(120000).default(15000),
+  REQUEST_TIMEOUT_MS: z.coerce.number().int().min(5000).max(120000).default(15000),
   ALLOWED_HOSTS: z.string().optional(),
   LINEAGE_FILE: z.string().min(1).max(4096).default(".aster-runtime/rosytalk-lineage.jsonl"),
 });

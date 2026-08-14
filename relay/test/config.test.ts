@@ -15,6 +15,16 @@ describe("relay configuration security invariants", () => {
     assert.equal(config.requestTimeoutMs, 15_000);
   });
 
+  test("keeps the phone request timeout above the Android verification window", () => {
+    assert.throws(
+      () => loadConfig({ ...validEnvironment, REQUEST_TIMEOUT_MS: "4999" }),
+      /5000/,
+    );
+
+    const config = loadConfig({ ...validEnvironment, REQUEST_TIMEOUT_MS: "5000" });
+    assert.equal(config.requestTimeoutMs, 5_000);
+  });
+
   test("rejects credentials shared across phone and MCP boundaries", () => {
     const shared = "s".repeat(32);
     assert.throws(

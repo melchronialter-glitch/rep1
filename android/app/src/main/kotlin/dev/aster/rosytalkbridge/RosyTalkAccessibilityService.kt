@@ -6,6 +6,7 @@ import android.os.Build
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
+import android.os.SystemClock
 import android.util.Base64
 import android.view.accessibility.AccessibilityEvent
 import android.view.accessibility.AccessibilityNodeInfo
@@ -24,6 +25,7 @@ class RosyTalkAccessibilityService : AccessibilityService() {
     private var currentObservationParentId: String? = null
     private val submissionSnapshotGuard = SubmissionSnapshotGuard(BridgeRuntime::publishSnapshot)
     private val publishRunnable = Runnable { publishChangedSnapshot() }
+    private var pendingSubmission: PendingSubmission? = null
 
     override fun onServiceConnected() {
         super.onServiceConnected()
@@ -34,7 +36,29 @@ class RosyTalkAccessibilityService : AccessibilityService() {
     }
 
     override fun onDestroy() {
+        val interruptedSubmission = pendingSubmission
+        pendingSubmission = null
         mainHandler.removeCallbacksAndMessages(null)
+        if (interruptedSubmission != null) {
+            // The provider may disappear during service teardown. Restoration is best effort,
+            // but the relay completion must still run exactly once so its request is released.
+            runCatching {
+                restoreDraft(
+                    targetPackage = interruptedSubmission.targetPackage,
+                    expectedSurfaceIdentity = interruptedSubmission.surfaceIdentity,
+                    originalDraft = interruptedSubmission.originalDraft,
+                    injectedDraft = interruptedSubmission.text,
+                )
+            }
+            interruptedSubmission.complete(
+                Result.failure(
+                    BridgeException(
+                        "ACCESSIBILITY_UNAVAILABLE",
+                        "The accessibility service stopped before message submission completed",
+                    ),
+                ),
+            )
+        }
         if (current === this) current = null
         BridgeRuntime.accessibilityStateChanged(enabled = false)
         super.onDestroy()
@@ -70,6 +94,12 @@ class RosyTalkAccessibilityService : AccessibilityService() {
     fun captureSnapshot(maxItems: Int): ConversationSnapshot {
         check(Looper.myLooper() == Looper.getMainLooper()) {
             "Accessibility snapshots must run on the main thread"
+        }
+        if (pendingSubmission != null) {
+            throw BridgeException(
+                "PHONE_BUSY",
+                "Message text is still being verified; wait for submission to finish",
+            )
         }
         val targetPackage = requireActiveTarget()
         val root = rootInActiveWindow
@@ -243,9 +273,18 @@ class RosyTalkAccessibilityService : AccessibilityService() {
         }
     }
 
-    fun submitText(text: String, expectedRevision: Long, expectedSnapshotId: String): SubmitResult {
+    fun submitText(
+        text: String,
+        expectedRevision: Long,
+        expectedSnapshotId: String,
+        requestIsActive: () -> Boolean,
+        complete: (Result<SubmitResult>) -> Unit,
+    ) {
         check(Looper.myLooper() == Looper.getMainLooper()) {
             "Accessibility submissions must run on the main thread"
+        }
+        if (pendingSubmission != null) {
+            throw BridgeException("PHONE_BUSY", "Another message submission is still in progress")
         }
         if (!BridgeRuntime.submissionsEnabled) {
             throw BridgeException(
@@ -308,51 +347,162 @@ class RosyTalkAccessibilityService : AccessibilityService() {
             val setArguments = Bundle().apply {
                 putCharSequence(AccessibilityNodeInfo.ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE, text)
             }
+            val verificationStartedAtElapsedMs = SystemClock.elapsedRealtime()
             if (!input.performAction(AccessibilityNodeInfo.ACTION_SET_TEXT, setArguments)) {
-                restoreDraft(targetPackage, expectedSurfaceIdentity, originalDraft)
+                restoreDraft(
+                    targetPackage,
+                    expectedSurfaceIdentity,
+                    originalDraft,
+                    text,
+                )
                 throw BridgeException("SUBMIT_FAILED", "The selected app rejected text entry")
             }
+            val submission = PendingSubmission(
+                targetPackage = targetPackage,
+                text = text,
+                originalDraft = originalDraft,
+                surfaceIdentity = expectedSurfaceIdentity,
+                expectedRevision = expectedRevision,
+                expectedSnapshotId = expectedSnapshotId,
+                startedAtElapsedMs = verificationStartedAtElapsedMs,
+                requestIsActive = requestIsActive,
+                complete = complete,
+            )
+            pendingSubmission = submission
+            mainHandler.removeCallbacks(publishRunnable)
+            if (!mainHandler.postDelayed(
+                    { verifyPendingSubmission(submission) },
+                    ComposerVerificationPolicy.delayBeforeAttempt(1),
+                )
+            ) {
+                pendingSubmission = null
+                restoreDraft(targetPackage, expectedSurfaceIdentity, originalDraft, text)
+                throw BridgeException(
+                    "SUBMIT_FAILED",
+                    "The phone could not schedule exact-text verification",
+                )
+            }
+        } finally {
+            recycleCapturedNodes(actionRoot, actionNodes)
+        }
+    }
 
-            val method = try {
-                val updatedRoot = rootInActiveWindow
-                    ?: throw BridgeException(
+    private fun verifyPendingSubmission(submission: PendingSubmission) {
+        check(Looper.myLooper() == Looper.getMainLooper()) {
+            "Accessibility submissions must run on the main thread"
+        }
+        if (pendingSubmission !== submission) return
+
+        var retry = false
+        var result: Result<SubmitResult>? = null
+        var updatedRoot: AccessibilityNodeInfo? = null
+        val updatedNodes = ArrayList<AccessibilityNodeInfo>()
+        try {
+            if (!ComposerVerificationPolicy.isWithinDeadline(
+                    submission.startedAtElapsedMs,
+                    SystemClock.elapsedRealtime(),
+                )
+            ) {
+                throw BridgeException(
+                    "REQUEST_CANCELLED",
+                    "The local exact-text verification deadline expired before submission",
+                )
+            }
+            if (!submission.requestIsActive()) {
+                throw BridgeException(
+                    "REQUEST_CANCELLED",
+                    "The relay request ended before message submission completed",
+                )
+            }
+            if (!BridgeRuntime.submissionsEnabled) {
+                throw BridgeException(
+                    "SUBMISSIONS_DISABLED",
+                    "Message submission was disabled before the send action",
+                )
+            }
+
+            submission.attempt += 1
+            if (Build.VERSION.SDK_INT >= 33) {
+                // ACTION_SET_TEXT may leave Accessibility's cached tree one frame behind the app.
+                // Force this verification attempt to acquire the provider's current nodes.
+                clearCache()
+            }
+
+            updatedRoot = rootInActiveWindow
+                ?: throw BridgeException(
+                    "SUBMIT_FAILED",
+                    "The selected app window disappeared after text entry",
+                )
+            if (Build.VERSION.SDK_INT < 33 && !updatedRoot.refresh()) {
+                if (submission.attempt < ComposerVerificationPolicy.MAX_ATTEMPTS) {
+                    throw ComposerTreeNotFreshException()
+                } else {
+                    throw BridgeException(
                         "SUBMIT_FAILED",
-                        "The selected app window disappeared after text entry",
+                        "The composer did not expose a fresh accessibility node before timeout",
                     )
-                val updatedNodes = ArrayList<AccessibilityNodeInfo>()
-                try {
-                    if (updatedRoot.packageName?.toString() != targetPackage) {
-                        throw BridgeException(
-                            "SUBMIT_FAILED",
-                            "The selected app left the foreground after text entry",
-                        )
-                    }
-                    if (collectNodes(updatedRoot, updatedNodes, 0, isRoot = true)) {
-                        throw BridgeException(
-                            "SUBMIT_FAILED",
-                            "The target accessibility tree became truncated after text entry",
-                        )
-                    }
-                    val updatedSurface = identifyChatSurface(updatedRoot, updatedNodes)
-                    if (surfaceIdentity(updatedRoot, updatedNodes, updatedSurface) != expectedSurfaceIdentity) {
-                        throw BridgeException(
-                            "STALE_SURFACE",
-                            "The conversation surface changed after text entry; no send action was attempted",
-                        )
-                    }
-                    if (updatedSurface.composer.text?.toString().orEmpty() != text) {
-                        throw BridgeException(
-                            "SUBMIT_FAILED",
-                            "The visible composer does not contain the exact requested text",
-                        )
-                    }
+                }
+            }
+            if (updatedRoot.packageName?.toString() != submission.targetPackage) {
+                throw BridgeException(
+                    "SUBMIT_FAILED",
+                    "The selected app left the foreground after text entry",
+                )
+            }
+            if (collectNodes(updatedRoot, updatedNodes, 0, isRoot = true)) {
+                throw BridgeException(
+                    "SUBMIT_FAILED",
+                    "The target accessibility tree became truncated after text entry",
+                )
+            }
+            val updatedSurface = identifyChatSurface(updatedRoot, updatedNodes)
+            if (surfaceIdentity(updatedRoot, updatedNodes, updatedSurface) != submission.surfaceIdentity) {
+                throw BridgeException(
+                    "STALE_SURFACE",
+                    "The conversation surface changed after text entry; no send action was attempted",
+                )
+            }
 
-                    if (surface.sendControl != null) {
+            when (
+                ComposerVerificationPolicy.decide(
+                    observedText = updatedSurface.composer.text?.toString().orEmpty(),
+                    requestedText = submission.text,
+                    originalDraft = submission.originalDraft,
+                    attempt = submission.attempt,
+                )
+            ) {
+                ComposerVerificationDecision.RETRY -> retry = true
+                ComposerVerificationDecision.REJECT -> throw BridgeException(
+                    "SUBMIT_FAILED",
+                    "The visible composer does not contain the exact requested text",
+                )
+                ComposerVerificationDecision.READY -> {
+                    // Authorization and request lifetime are checked again on the same main-loop
+                    // turn as the irreversible send action.
+                    if (!ComposerVerificationPolicy.isWithinDeadline(
+                            submission.startedAtElapsedMs,
+                            SystemClock.elapsedRealtime(),
+                        )
+                    ) {
+                        throw BridgeException(
+                            "REQUEST_CANCELLED",
+                            "The local exact-text verification deadline expired before the send action",
+                        )
+                    }
+                    if (!submission.requestIsActive()) {
+                        throw BridgeException(
+                            "REQUEST_CANCELLED",
+                            "The relay request ended before the send action",
+                        )
+                    }
+                    if (!BridgeRuntime.submissionsEnabled) {
+                        throw BridgeException(
+                            "SUBMISSIONS_DISABLED",
+                            "Message submission was disabled before the send action",
+                        )
+                    }
+                    val method = if (updatedSurface.sendControl != null) {
                         val updatedSend = updatedSurface.sendControl
-                            ?: throw BridgeException(
-                                "NO_SUBMIT_CONTROL",
-                                "The adjacent send control disappeared after text entry",
-                            )
                         if (!updatedSend.isEnabled ||
                             !updatedSend.performAction(AccessibilityNodeInfo.ACTION_CLICK)
                         ) {
@@ -364,41 +514,94 @@ class RosyTalkAccessibilityService : AccessibilityService() {
                         "accessibility_click"
                     } else {
                         val imeActionId = updatedSurface.imeActionId
-                            ?: throw BridgeException("NO_SUBMIT_CONTROL", "The IME send action disappeared")
+                            ?: throw BridgeException(
+                                "NO_SUBMIT_CONTROL",
+                                "The IME send action disappeared",
+                            )
                         if (!updatedSurface.composer.performAction(imeActionId)) {
-                            throw BridgeException("SUBMIT_FAILED", "The selected app rejected the IME send action")
+                            throw BridgeException(
+                                "SUBMIT_FAILED",
+                                "The selected app rejected the IME send action",
+                            )
                         }
                         "ime_enter"
                     }
-                } finally {
-                    recycleCapturedNodes(updatedRoot, updatedNodes)
+                    result = Result.success(
+                        SubmitResult(
+                            targetPackage = submission.targetPackage,
+                            method = method,
+                            basedOnRevision = submission.expectedRevision,
+                            basedOnEventId = submission.expectedSnapshotId,
+                            eventId = UUID.randomUUID().toString(),
+                        ),
+                    )
                 }
-            } catch (error: BridgeException) {
-                restoreDraft(targetPackage, expectedSurfaceIdentity, originalDraft)
-                throw error
-            } catch (_: Exception) {
-                restoreDraft(targetPackage, expectedSurfaceIdentity, originalDraft)
-                throw BridgeException(
+            }
+        } catch (_: ComposerTreeNotFreshException) {
+            retry = true
+        } catch (error: BridgeException) {
+            result = Result.failure(error)
+        } catch (_: Exception) {
+            result = Result.failure(
+                BridgeException(
                     "SUBMIT_FAILED",
                     "Message submission failed; restoring the prior draft was attempted",
-                )
-            }
-
-            mainHandler.removeCallbacks(publishRunnable)
-            mainHandler.postDelayed(publishRunnable, SNAPSHOT_AFTER_SUBMIT_MS)
-            return SubmitResult(
-                targetPackage = targetPackage,
-                method = method,
-                basedOnRevision = expectedRevision,
-                basedOnEventId = expectedSnapshotId,
-                eventId = UUID.randomUUID().toString(),
+                ),
             )
         } finally {
-            recycleCapturedNodes(actionRoot, actionNodes)
+            updatedRoot?.let { recycleCapturedNodes(it, updatedNodes) }
         }
+
+        if (retry) {
+            if (!mainHandler.postDelayed(
+                    { verifyPendingSubmission(submission) },
+                    ComposerVerificationPolicy.delayBeforeAttempt(submission.attempt + 1),
+                )
+            ) {
+                finishPendingSubmission(
+                    submission,
+                    Result.failure(
+                        BridgeException(
+                            "SUBMIT_FAILED",
+                            "The phone could not continue exact-text verification",
+                        ),
+                    ),
+                )
+            }
+            return
+        }
+        finishPendingSubmission(submission, requireNotNull(result))
+    }
+
+    private fun finishPendingSubmission(
+        submission: PendingSubmission,
+        result: Result<SubmitResult>,
+    ) {
+        if (pendingSubmission !== submission) return
+        pendingSubmission = null
+        if (result.isFailure) {
+            // Accessibility providers can invalidate nodes while an error is being handled.
+            // Never let a best-effort restoration suppress the terminal relay callback.
+            runCatching {
+                restoreDraft(
+                    submission.targetPackage,
+                    submission.surfaceIdentity,
+                    submission.originalDraft,
+                    submission.text,
+                )
+            }
+        }
+        mainHandler.removeCallbacks(publishRunnable)
+        mainHandler.postDelayed(publishRunnable, SNAPSHOT_AFTER_SUBMIT_MS)
+        submission.complete(result)
     }
 
     private fun publishChangedSnapshot() {
+        if (pendingSubmission != null) {
+            mainHandler.removeCallbacks(publishRunnable)
+            mainHandler.postDelayed(publishRunnable, SNAPSHOT_DEBOUNCE_MS)
+            return
+        }
         val previousRevision = revision
         try {
             val snapshot = captureSnapshot(MAX_VISIBLE_ITEMS)
@@ -691,7 +894,7 @@ class RosyTalkAccessibilityService : AccessibilityService() {
         }
         add(targetPackage)
         add(root.windowId.toString())
-        add(root.window?.title?.toString())
+        add(windowTitle(root))
         nodes.forEach { node ->
             val bounds = nodeBounds(node)
             add(node.packageName?.toString())
@@ -732,7 +935,7 @@ class RosyTalkAccessibilityService : AccessibilityService() {
 
         return SurfaceIdentity(
             windowId = root.windowId,
-            windowTitle = root.window?.title?.toString(),
+            windowTitle = windowTitle(root),
             rootClassName = root.className?.toString(),
             rootViewId = root.viewIdResourceName,
             rootBounds = bounds(root),
@@ -780,13 +983,16 @@ class RosyTalkAccessibilityService : AccessibilityService() {
         targetPackage: String,
         expectedSurfaceIdentity: SurfaceIdentity,
         originalDraft: String,
+        injectedDraft: String,
     ): Boolean {
         val arguments = Bundle().apply {
             putCharSequence(AccessibilityNodeInfo.ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE, originalDraft)
         }
+        if (Build.VERSION.SDK_INT >= 33) clearCache()
         val root = rootInActiveWindow ?: return false
         val nodes = ArrayList<AccessibilityNodeInfo>()
         try {
+            if (Build.VERSION.SDK_INT < 33 && !root.refresh()) return false
             if (root.packageName?.toString() != targetPackage) return false
             if (collectNodes(root, nodes, 0, isRoot = true)) return false
             val currentSurface = try {
@@ -795,10 +1001,22 @@ class RosyTalkAccessibilityService : AccessibilityService() {
                 return false
             }
             if (surfaceIdentity(root, nodes, currentSurface) != expectedSurfaceIdentity) return false
-            return currentSurface.composer.performAction(
-                AccessibilityNodeInfo.ACTION_SET_TEXT,
-                arguments,
-            )
+            val currentDraft = currentSurface.composer.text?.toString().orEmpty()
+            return when (
+                ComposerVerificationPolicy.restoreDecision(
+                    currentText = currentDraft,
+                    injectedText = injectedDraft,
+                    originalDraft = originalDraft,
+                )
+            ) {
+                ComposerRestoreDecision.ALREADY_RESTORED -> true
+                // A third value may be a user's edit. Never overwrite it during recovery.
+                ComposerRestoreDecision.LEAVE_USER_EDIT -> false
+                ComposerRestoreDecision.RESTORE_INJECTED -> currentSurface.composer.performAction(
+                    AccessibilityNodeInfo.ACTION_SET_TEXT,
+                    arguments,
+                )
+            }
         } finally {
             recycleCapturedNodes(root, nodes)
         }
@@ -813,6 +1031,15 @@ class RosyTalkAccessibilityService : AccessibilityService() {
         val window = root.window ?: return null
         return try {
             Rect().also(window::getBoundsInScreen).toScreenBounds()
+        } finally {
+            recycleWindow(window)
+        }
+    }
+
+    private fun windowTitle(root: AccessibilityNodeInfo): String? {
+        val window = root.window ?: return null
+        return try {
+            window.title?.toString()
         } finally {
             recycleWindow(window)
         }
@@ -908,6 +1135,21 @@ class RosyTalkAccessibilityService : AccessibilityService() {
         val usesIme: Boolean,
         val contextSignature: String,
     )
+
+    private data class PendingSubmission(
+        val targetPackage: String,
+        val text: String,
+        val originalDraft: String,
+        val surfaceIdentity: SurfaceIdentity,
+        val expectedRevision: Long,
+        val expectedSnapshotId: String,
+        val startedAtElapsedMs: Long,
+        val requestIsActive: () -> Boolean,
+        val complete: (Result<SubmitResult>) -> Unit,
+        var attempt: Int = 0,
+    )
+
+    private class ComposerTreeNotFreshException : Exception()
 
     companion object {
         @Volatile
