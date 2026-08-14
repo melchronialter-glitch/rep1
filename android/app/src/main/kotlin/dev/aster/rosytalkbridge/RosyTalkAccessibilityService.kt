@@ -22,6 +22,7 @@ class RosyTalkAccessibilityService : AccessibilityService() {
     private var observationSequence = 0L
     private var lastObservationId: String? = null
     private var currentObservationParentId: String? = null
+    private val submissionSnapshotGuard = SubmissionSnapshotGuard(BridgeRuntime::publishSnapshot)
     private val publishRunnable = Runnable { publishChangedSnapshot() }
 
     override fun onServiceConnected() {
@@ -259,32 +260,21 @@ class RosyTalkAccessibilityService : AccessibilityService() {
         // Bind the action to the exact visible state that Aster most recently read/waited for.
         // This full capture occurs before any field mutation or click.
         val currentSnapshot = captureSnapshot(MAX_VISIBLE_ITEMS)
-        if (currentSnapshot.revision != expectedRevision) {
-            throw BridgeException(
-                "STALE_SNAPSHOT",
-                "The visible RosyTalk window changed; read it again before submitting",
-            )
-        }
-        if (currentSnapshot.lineage.eventId != expectedSnapshotId) {
-            throw BridgeException(
-                "STALE_SNAPSHOT_ID",
-                "The visible snapshot ancestry changed; read it again before submitting",
-            )
-        }
+        submissionSnapshotGuard.requireInitialSnapshot(
+            snapshot = currentSnapshot,
+            expectedRevision = expectedRevision,
+            expectedSnapshotId = expectedSnapshotId,
+        )
         val targetPackage = currentSnapshot.targetPackage
 
         // Revalidate after resolving the screen and immediately before any mutation. The second
         // capture catches a draft edit, navigation, or window replacement during preparation.
         val revalidatedSnapshot = captureSnapshot(MAX_VISIBLE_ITEMS)
-        if (
-            revalidatedSnapshot.revision != expectedRevision ||
-            revalidatedSnapshot.lineage.eventId != expectedSnapshotId
-        ) {
-            throw BridgeException(
-                "STALE_SNAPSHOT",
-                "The visible RosyTalk window changed; read it again before submitting",
-            )
-        }
+        submissionSnapshotGuard.requireRevalidatedSnapshot(
+            snapshot = revalidatedSnapshot,
+            expectedRevision = expectedRevision,
+            expectedSnapshotId = expectedSnapshotId,
+        )
         val actionRoot = rootInActiveWindow
             ?: throw BridgeException("TARGET_NOT_FOREGROUND", "The selected app has no active window")
         val actionNodes = ArrayList<AccessibilityNodeInfo>()

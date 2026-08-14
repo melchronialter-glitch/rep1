@@ -946,6 +946,91 @@ describe("RosyTalk relay integration", () => {
     assert.equal(records[2]?.semanticParentEventId, records[1]?.eventId);
   });
 
+  test("continues snapshot lineage after a stale submit publishes the changed observation", async (t) => {
+    const harness = await startHarness(t);
+    let snapshotRequests = 0;
+    await connectPhone(harness, {
+      responder: (request, socket) => {
+        if (request.method === "chat.snapshot") {
+          snapshotRequests += 1;
+          sendOk(socket, request, snapshot(snapshotRequests === 1 ? 1 : 3));
+        } else if (request.method === "chat.submit") {
+          socket.send(
+            JSON.stringify({
+              type: "event",
+              event: "chat.updated",
+              snapshot: snapshot(2, "The window changed during submission validation"),
+            }),
+          );
+          sendError(
+            socket,
+            request,
+            "STALE_SNAPSHOT",
+            "The visible RosyTalk window changed; read it again before submitting",
+          );
+        }
+      },
+    });
+    const client = await connectMcp(harness);
+    const initial = structured(
+      immediate(
+        await client.callTool({
+          name: "rosytalk_read_visible",
+          arguments: { max_items: 20 },
+        }),
+      ),
+    );
+    const initialLineage = initial.lineage as { eventId: string };
+
+    const failed = immediate(
+      await client.callTool({
+        name: "rosytalk_submit_message",
+        arguments: {
+          text: "Do not submit after the window changes",
+          expected_revision: 1,
+          expected_snapshot_id: initialLineage.eventId,
+        },
+      }),
+    );
+    assert.match(errorText(failed), /STALE_SNAPSHOT/);
+    assert.equal(harness.app.broker.status().latestRevision, 2);
+
+    const refreshed = structured(
+      immediate(
+        await client.callTool({
+          name: "rosytalk_read_visible",
+          arguments: { max_items: 20 },
+        }),
+      ),
+    );
+    assert.equal(refreshed.revision, 3);
+    assert.equal(harness.app.broker.status().latestRevision, 3);
+
+    const history = structured(
+      immediate(
+        await client.callTool({
+          name: "rosytalk_read_lineage",
+          arguments: { after_sequence: 0, limit: 20 },
+        }),
+      ),
+    );
+    const records = history.records as Array<Record<string, unknown>>;
+    assert.deepEqual(
+      records.map((record) => record.event),
+      [
+        "snapshot.observed",
+        "submission.requested",
+        "snapshot.observed",
+        "submission.failed",
+        "snapshot.observed",
+      ],
+    );
+    assert.equal(records[2]?.sourceParentEventId, records[0]?.sourceEventId);
+    assert.equal(records[2]?.semanticParentEventId, records[0]?.eventId);
+    assert.equal(records[4]?.sourceParentEventId, records[2]?.sourceEventId);
+    assert.equal(records[4]?.semanticParentEventId, records[2]?.eventId);
+  });
+
   test("records a malformed success as one indeterminate outcome", async (t) => {
     const harness = await startHarness(t);
     await connectPhone(harness, {

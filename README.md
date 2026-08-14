@@ -17,6 +17,7 @@ The bridge does not export a complete thread, prove who authored visible text, r
 - `npm run commission:mock` exercises an actual authenticated MCP roundtrip through all eight v0.4 tools, a reply update, stale-submit refusal, explicit Room state, metadata-only surface diagnostics, and the no-message-bodies/no-expression-captions lineage invariant.
 - Android unit tests and `assembleDebug` pass in [GitHub Actions run 31809268315](https://github.com/melchronialter-glitch/rep1/actions/runs/31809268315). The verified v0.4 debug APK SHA-256 is `29d4b2cc257af82eaa4f50b519c69d597d22b5e5a7c4e4166f10289bd56bb652`.
 - The v0.4.1 physical-phone compatibility policy tests and `assembleDebug` pass in [GitHub Actions run 31819719889](https://github.com/melchronialter-glitch/rep1/actions/runs/31819719889). Its debug APK SHA-256 is `b61bb9d618036b5edfa35c47f97d9bd8c834ab9e0ae88a1f13a666bd0bb60807`.
+- The v0.4.2 stale-submission lineage regression is covered by Android policy tests and a relay integration test; Android CI verification is pending for this source revision.
 - The verified APK is published as that workflow run's artifact; no prebuilt binary is tracked in this source package unless a file is explicitly present under `release/`.
 - PowerShell launchers were statically reviewed; this Linux build environment did not contain PowerShell for an execution test.
 
@@ -29,9 +30,10 @@ The bridge does not export a complete thread, prove who authored visible text, r
 5. Verify read-only operation before temporarily enabling submission.
 6. If connecting ChatGPT, follow [Connect ChatGPT](docs/CONNECT_CHATGPT.md), review the [threat model](docs/THREAT_MODEL.md), then use the ordered [first-conversation commissioning runbook](docs/COMMISSION_FIRST_CONVERSATION.md).
 
-The physical-phone compatibility patch and its verification boundary are recorded in
-[v0.4.1 release notes](docs/RELEASE_v0.4.1.md). The prior source release remains documented in
-[v0.4 release notes](docs/RELEASE_v0.4.md).
+The stale-submission lineage repair and its verification boundary are recorded in
+[v0.4.2 release notes](docs/RELEASE_v0.4.2.md). The physical-phone compatibility patch remains
+documented in [v0.4.1 release notes](docs/RELEASE_v0.4.1.md), and the prior source release remains
+documented in [v0.4 release notes](docs/RELEASE_v0.4.md).
 
 ## Safety invariants
 
