@@ -1,8 +1,9 @@
-# Aster RosyTalk Bridge for Android
+# Aster Room / RosyTalk Bridge for Android
 
-This is the phone client for the RosyTalk relay in the parent project. It reads only the
-currently materialized accessibility tree of one explicitly selected Android package and can
-submit text only while that package is the foreground window.
+This is the phone client for the RosyTalk relay in the parent project. Its Aster Room screen
+shows a process-local mirror of the most recent bounded visible snapshot and a code-drawn Aster
+face. It reads only the currently materialized accessibility tree of one explicitly selected
+Android package and can submit text only while that package is the foreground window.
 
 It does not read notifications, the clipboard, files, photos, or any other app window. It opens
 no inbound phone port: the app makes an authenticated outbound WebSocket connection to
@@ -30,8 +31,8 @@ The installable APK is written to `app/build/outputs/apk/debug/app-debug.apk`.
 3. Enter the relay WebSocket URL and matching phone token.
 4. Tap **Open Accessibility settings** and enable **RosyTalk conversation bridge**.
 5. Return to the bridge and tap **Connect**.
-6. Open the intended RosyTalk conversation. Enable **Allow message submission for 15 minutes**
-   only when you want the bridge to submit replies.
+6. Open the intended RosyTalk conversation. Enable **Allow Aster actions for 15 minutes** only
+   when you want the bridge to submit replies or accept an explicitly authored Room expression.
 
 The emulator debug default is `ws://10.0.2.2:8787/phone`. Debug builds accept `ws://` for local
 development. Release builds require `wss://` in both code and Android network policy.
@@ -59,16 +60,27 @@ accessibility exposes only the visible, materialized window, not a complete tran
 is `remote`, `self`, or `unknown`, and `senderBasis` is `screen_geometry` or `unknown`; left/right
 geometry is never represented as verified authorship.
 
-## Submission safeguard
+## Action safeguard
 
-**Allow message submission for 15 minutes** is off at Activity launch, automatically expires,
-is disabled on target change, Accessibility shutdown, or any relay disconnect, and is never persisted. Even while armed, submission
+**Allow Aster actions for 15 minutes** is off at Activity launch, automatically expires,
+is disabled on target change, Accessibility shutdown, or any relay disconnect, and is never
+persisted. It gates both message submission and MCP-authored Room expression changes. Even while armed, submission
 is rejected unless the selected target is the foreground chat surface described above. Ambiguity
 is an error; the bridge does not guess and never uses the clipboard. A non-empty local composer
 is also an error, so a user's existing draft is never intentionally overwritten.
 
 A successful local action returns `submitted: true` and `deliveryConfirmed: false`. It does not
 claim that RosyTalk or the remote participant delivered or received the text.
+
+Room expressions are limited to `neutral`, `thinking`, `amused`, `soft`, `fierce`, `flustered`,
+and `blush`. The face changes only after an explicit local selection or an authenticated
+`room.expression` request; it never guesses an expression from message sentiment. The UI labels
+the source as the phone user or an authenticated MCP caller rather than promoting bearer access
+into proof of Aster's identity. The latest expression/caption and visible-message mirror
+remain in process memory and are not saved by the Android client.
+The Activity sets Android `FLAG_SECURE`, so Aster Room is omitted from ordinary screenshots,
+screen recordings, and Recents thumbnails. This protects the mirrored conversation and token
+field; capture the RosyTalk app itself if you deliberately need a conversation screenshot.
 
 ## Phone protocol
 
@@ -77,6 +89,8 @@ After the authenticated protocol-v2 hello, the phone handles exactly:
 - `chat.snapshot` with optional `maxItems` from 1 to 200
 - `chat.submit` with nonblank `text` up to 16,000 characters plus the `expectedRevision` and
   `expectedSnapshotId` returned by the exact visible snapshot Aster acted on
+- `room.expression` with one enumerated explicit state, an optional caption up to 160 characters,
+  an authored timestamp, and an authored lineage event ID
 
 When visible target content changes, the phone pushes a `chat.updated` event carrying the same
 incomplete snapshot shape. The relay may use those revisions to implement waiting for a reply.

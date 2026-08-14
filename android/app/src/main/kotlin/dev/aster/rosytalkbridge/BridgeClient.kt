@@ -16,6 +16,7 @@ import java.net.SocketTimeoutException
 import java.net.URI
 import java.net.UnknownHostException
 import java.nio.charset.StandardCharsets
+import java.time.Instant
 import java.util.UUID
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicInteger
@@ -244,7 +245,13 @@ class BridgeClient(
                     ),
                     expectedSnapshotId = requiredUuid(params, "expectedSnapshotId"),
                 )
-                else -> throw BridgeException("METHOD_NOT_FOUND", "Unsupported chat method")
+                "room.expression" -> PendingOperation.Expression(
+                    expression = requiredExpression(params, "state"),
+                    caption = optionalBoundedString(params, "caption", MAX_EXPRESSION_CAPTION),
+                    authoredAt = requiredInstant(params, "authoredAt"),
+                    authoredEventId = requiredUuid(params, "authoredEventId"),
+                )
+                else -> throw BridgeException("METHOD_NOT_FOUND", "Unsupported phone method")
             }
         } catch (error: BridgeException) {
             pendingRequests.decrementAndGet()
@@ -256,15 +263,19 @@ class BridgeClient(
         mainHandler.post {
             try {
                 if (!isGenerationActive(generation)) return@post
-                val service = RosyTalkAccessibilityService.current
-                    ?: throw BridgeException(
-                        "ACCESSIBILITY_UNAVAILABLE",
-                        "Enable the RosyTalk bridge in Android Accessibility settings",
-                    )
                 val result = when (parsed) {
-                    is PendingOperation.Snapshot -> service.captureSnapshot(parsed.maxItems).toJson()
-                    is PendingOperation.Submit ->
-                        service.submitText(
+                    is PendingOperation.Expression -> BridgeRuntime.applyRemoteRoomExpression(
+                        expression = parsed.expression,
+                        caption = parsed.caption,
+                        authoredAt = parsed.authoredAt,
+                        authoredEventId = parsed.authoredEventId,
+                    ).toJson()
+                    is PendingOperation.Snapshot -> requireAccessibilityService()
+                        .captureSnapshot(parsed.maxItems)
+                        .also(BridgeRuntime::mirrorSnapshot)
+                        .toJson()
+                    is PendingOperation.Submit -> requireAccessibilityService()
+                        .submitText(
                             parsed.text,
                             parsed.expectedRevision,
                             parsed.expectedSnapshotId,
@@ -299,7 +310,7 @@ class BridgeClient(
             appContext.packageManager.getPackageInfo(appContext.packageName, 0).versionName
         } catch (_: Exception) {
             null
-        } ?: "0.2.0"
+        } ?: "0.3.0"
         val androidVersion = Build.VERSION.RELEASE?.takeIf { it.isNotBlank() }
             ?: Build.VERSION.SDK_INT.toString()
         val targetPackage = BridgePreferences.targetPackage(appContext)
@@ -327,12 +338,22 @@ class BridgeClient(
                     .put("accessibilityEnabled", accessibilityEnabled)
                     .put("canReadVisible", accessibilityEnabled)
                     .put("submissionsEnabled", BridgeRuntime.submissionsEnabled)
+                    // Feature support and the live action arm are distinct. The relay requires
+                    // both canSetExpression and submissionsEnabled before dispatch.
+                    .put("canSetExpression", true)
                     .put(
                         "canSubmit",
                         accessibilityEnabled && BridgeRuntime.submissionsEnabled,
                     ),
             )
     }
+
+    private fun requireAccessibilityService(): RosyTalkAccessibilityService =
+        RosyTalkAccessibilityService.current
+            ?: throw BridgeException(
+                "ACCESSIBILITY_UNAVAILABLE",
+                "Enable the RosyTalk bridge in Android Accessibility settings",
+            )
 
     private fun successResponse(id: String, result: JSONObject): JSONObject = JSONObject()
         .put("type", "response")
@@ -438,6 +459,41 @@ class BridgeClient(
         return value
     }
 
+    private fun requiredExpression(params: JSONObject, key: String): AsterExpression {
+        val value = requiredString(params, key)
+        return AsterExpression.fromWireName(value)
+            ?: throw BridgeException(
+                "INVALID_PARAMS",
+                "$key must be one of neutral, thinking, amused, soft, fierce, flustered, or blush",
+            )
+    }
+
+    private fun optionalBoundedString(params: JSONObject, key: String, maximum: Int): String? {
+        if (!params.has(key) || params.isNull(key)) return null
+        val value = params.opt(key) as? String
+            ?: throw BridgeException("INVALID_PARAMS", "$key must be a string or null")
+        if (value.length > maximum || value.trim().isEmpty()) {
+            throw BridgeException(
+                "INVALID_PARAMS",
+                "$key must contain 1 to $maximum characters when present",
+            )
+        }
+        // Preserve the exact authored value so the acknowledgement matches relay ancestry.
+        return value
+    }
+
+    private fun requiredInstant(params: JSONObject, key: String): String {
+        val value = requiredString(params, key)
+        if (value.length > MAX_AUTHORED_AT) {
+            throw BridgeException("INVALID_PARAMS", "$key is unexpectedly long")
+        }
+        return try {
+            Instant.parse(value).toString()
+        } catch (_: Exception) {
+            throw BridgeException("INVALID_PARAMS", "$key must be an ISO-8601 instant")
+        }
+    }
+
     private fun normalizeRelayUrl(rawUrl: String): String {
         val uri = try {
             URI(rawUrl.trim())
@@ -506,6 +562,12 @@ class BridgeClient(
             val expectedRevision: Long,
             val expectedSnapshotId: String,
         ) : PendingOperation
+        data class Expression(
+            val expression: AsterExpression,
+            val caption: String?,
+            val authoredAt: String,
+            val authoredEventId: String,
+        ) : PendingOperation
     }
 
     private companion object {
@@ -519,6 +581,8 @@ class BridgeClient(
         const val MAX_ERROR_CODE = 100
         const val MAX_ERROR_MESSAGE = 1000
         const val MAX_LOGGED_METHOD = 80
+        const val MAX_EXPRESSION_CAPTION = 160
+        const val MAX_AUTHORED_AT = 80
         const val MAX_PENDING_REQUESTS = 8
         const val MAX_WEBSOCKET_QUEUE_BYTES = 8L * 1024L * 1024L
     }

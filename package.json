@@ -1,32 +1,10 @@
-{
+YªçŠx-®éÜj×¢ëiºÚ+Š§j[h‘éÜ¢éíßN¢Ö¥¢ëiºÙbë5{
   "name": "aster-rosytalk-bridge",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "private": true,
   "type": "module",
   "description": "Exact-app Android RosyTalk accessibility bridge for MCP",
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "check": "tsc -p tsconfig.json --noEmit",
-    "dev": "tsx watch relay/src/index.ts",
-    "start": "node dist/relay/src/index.js",
-    "mock-phone": "tsx relay/src/mock-phone.ts",
-    "test": "node --import tsx --test relay/test/*.test.ts",
-    "test:all": "npm run check && npm test"
-  },
-  "dependencies": {
-    "@modelcontextprotocol/sdk": "1.30.0",
-    "express": "5.1.0",
-    "ws": "8.21.2",
-    "zod": "4.4.3"
-  },
-  "devDependencies": {
-    "@types/express": "5.0.3",
-    "@types/node": "24.10.1",
-    "@types/ws": "8.18.1",
-    "tsx": "4.20.6",
-    "typescript": "5.9.3"
-  },
-  "engines": {
-    "node": ">=20"
-  }
-}
+    "dev": "tsx watch relay/×N-¢G§²ÚîÆ­y×FW‡G&÷Fö6öÂ÷6F²#¢#ã3ã"À¢&W‡&W72#¢#Rãã"À¢'w2#¢#‚ã#ã""À¢'¦öB#¢#BãBã2 ¢ÒÀ¢&FWdFWVæFVæ6–W2#¢°¢$G—W2öW‡&W72#¢#Rãã2"À¢$G—W2öæöFR#¢##Bãã"À¢$G—W2÷w2#¢#‚ã‚ã"À¢'G7‚#¢#Bã#ãb"À¢'G—W67&—B#¢#Rã’ã2 ¢ÒÀ¢&Væv–æW2#¢°¢&æöFR#¢#ãÓ# ¢Ð§Ð

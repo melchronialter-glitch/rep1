@@ -4,6 +4,8 @@ import android.content.Context
 import android.os.Handler
 import android.os.Looper
 import android.os.SystemClock
+import java.time.Instant
+import java.util.UUID
 
 enum class ConnectionState {
     DISCONNECTED,
@@ -14,6 +16,9 @@ enum class ConnectionState {
 interface BridgeListener {
     fun onConnectionState(state: ConnectionState, detail: String)
     fun onActivity(message: String)
+    fun onSnapshot(snapshot: ConversationSnapshot) = Unit
+    fun onSnapshotCleared() = Unit
+    fun onRoomExpression(state: AsterRoomExpressionState) = Unit
 }
 
 /** Process-local runtime. The WebSocket stays outbound-only and can live with the enabled
@@ -29,7 +34,7 @@ object BridgeRuntime : BridgeListener {
                 mainHandler.postDelayed(this, remaining)
             } else {
                 submissionExpiresAtElapsedMs = 0L
-                onActivity("Message submission authorization expired")
+                onActivity("Aster message-submission and expression authorization expired")
                 if (initialized && client.isActive) client.refreshCapabilities()
             }
         }
@@ -43,6 +48,12 @@ object BridgeRuntime : BridgeListener {
 
     @Volatile
     private var submissionExpiresAtElapsedMs = 0L
+
+    @Volatile
+    private var mirroredSnapshot: ConversationSnapshot? = null
+
+    @Volatile
+    private var expressionState: AsterRoomExpressionState = defaultAsterRoomExpressionState()
 
     val submissionsEnabled: Boolean
         get() = submissionExpiresAtElapsedMs > SystemClock.elapsedRealtime()
@@ -63,6 +74,8 @@ object BridgeRuntime : BridgeListener {
         if (initialized) {
             listener.onConnectionState(client.state, client.stateDetail)
         }
+        mirroredSnapshot?.let(listener::onSnapshot)
+        listener.onRoomExpression(expressionState)
     }
 
     fun detach(listener: BridgeListener) {
@@ -75,7 +88,7 @@ object BridgeRuntime : BridgeListener {
     }
 
     fun disconnect(detail: String = "Disconnected") {
-        disableSubmissions("Message submission disabled on disconnect")
+        disableSubmissions("Aster actions disabled on disconnect")
         if (initialized) client.disconnect(detail)
     }
 
@@ -91,29 +104,92 @@ object BridgeRuntime : BridgeListener {
         }
         onActivity(
             if (enabled) {
-                "Message submission enabled for 15 minutes"
+                "Aster message submission and remote expression changes enabled for 15 minutes"
             } else {
-                "Message submission disabled"
+                "Aster message submission and remote expression changes disabled"
             },
         )
         if (initialized && client.isActive) client.refreshCapabilities()
     }
 
     fun targetConfigurationChanged() {
-        disableSubmissions("Message submission disabled because the target changed")
+        disableSubmissions("Aster actions disabled because the target changed")
+        mirroredSnapshot = null
+        uiListener?.onSnapshotCleared()
         RosyTalkAccessibilityService.current?.refreshPackageFilter()
         if (initialized && client.isActive) client.refreshCapabilities()
     }
 
     fun accessibilityStateChanged(enabled: Boolean) {
         if (!enabled) {
-            disableSubmissions("Message submission disabled because Accessibility stopped")
+            disableSubmissions("Aster actions disabled because Accessibility stopped")
+            mirroredSnapshot = null
+            uiListener?.onSnapshotCleared()
         }
         if (initialized && client.isActive) client.refreshCapabilities()
     }
 
     fun publishSnapshot(snapshot: ConversationSnapshot) {
+        mirrorSnapshot(snapshot)
         if (initialized) client.publishSnapshot(snapshot)
+    }
+
+    fun mirrorSnapshot(snapshot: ConversationSnapshot) {
+        mirroredSnapshot = snapshot
+        uiListener?.onSnapshot(snapshot)
+    }
+
+    val latestSnapshot: ConversationSnapshot?
+        get() = mirroredSnapshot
+
+    val currentRoomExpression: AsterRoomExpressionState
+        get() = expressionState
+
+    fun setLocalRoomExpression(expression: AsterExpression): AsterRoomExpressionState {
+        val now = Instant.now().toString()
+        val next = AsterRoomExpressionState(
+            expression = expression,
+            caption = null,
+            author = ExpressionAuthor.USER,
+            authoredAt = now,
+            appliedAt = now,
+            authoredEventId = UUID.randomUUID().toString(),
+            appliedEventId = UUID.randomUUID().toString(),
+        )
+        expressionState = next
+        uiListener?.onRoomExpression(next)
+        onActivity("Aster expression set to ${expression.wireName} by the phone user")
+        return next
+    }
+
+    fun applyRemoteRoomExpression(
+        expression: AsterExpression,
+        caption: String?,
+        authoredAt: String,
+        authoredEventId: String,
+    ): RoomExpressionApplyResult {
+        if (!submissionsEnabled) {
+            throw BridgeException(
+                "SUBMISSIONS_DISABLED",
+                "Enable Aster actions in the Android app for this session",
+            )
+        }
+        val appliedAt = Instant.now().toString()
+        val next = AsterRoomExpressionState(
+            expression = expression,
+            caption = caption,
+            // The bearer-authenticated path proves MCP tool input, not which person or model
+            // originated it. The Room must not silently promote transport into identity.
+            author = ExpressionAuthor.MCP,
+            authoredAt = authoredAt,
+            appliedAt = appliedAt,
+            authoredEventId = authoredEventId,
+            appliedEventId = UUID.randomUUID().toString(),
+        )
+        expressionState = next
+        uiListener?.onRoomExpression(next)
+        onActivity("Authenticated MCP authored the ${expression.wireName} room expression")
+        return RoomExpressionApplyResult(next)
     }
 
     val state: ConnectionState
@@ -124,7 +200,7 @@ object BridgeRuntime : BridgeListener {
 
     override fun onConnectionState(state: ConnectionState, detail: String) {
         if (state == ConnectionState.DISCONNECTED) {
-            disableSubmissions("Message submission disabled because the relay disconnected")
+            disableSubmissions("Aster actions disabled because the relay disconnected")
         }
         uiListener?.onConnectionState(state, detail)
     }
