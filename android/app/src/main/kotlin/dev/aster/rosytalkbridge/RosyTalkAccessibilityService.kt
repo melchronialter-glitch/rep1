@@ -637,12 +637,12 @@ class RosyTalkAccessibilityService : AccessibilityService() {
                 composerBounds = composerBounds.toPolicyBounds(),
             ),
         )
-        val composerHasMessageSignal = composerIsMessageLike || exactRosyTalkImeComposer
+        val composerSignalAccepted = composerIsMessageLike || exactRosyTalkImeComposer
         val failureStage = ChatSurfacePolicy.failureStage(
             ChatSurfacePolicy.DecisionInput(
                 composerCandidateCount = composers.size,
                 adjacentSendControlCount = adjacentSendControls.size,
-                composerHasMessageSignal = composerHasMessageSignal,
+                composerHasMessageSignal = composerSignalAccepted,
                 composerHasImeSendAction = exposedImeSend != null,
                 hasConversationContext = hasConversationContext,
             ),
@@ -652,7 +652,9 @@ class RosyTalkAccessibilityService : AccessibilityService() {
             composerCandidates = composers,
             sendControlCandidates = sendControlCandidates,
             adjacentSendControls = adjacentSendControls,
-            composerHasMessageSignal = composerHasMessageSignal,
+            // Preserve the raw lexical observation in diagnostics. The package-specific
+            // compatibility result affects acceptance, not what RosyTalk actually exposed.
+            composerHasMessageSignal = composerIsMessageLike,
             composerHasImeSendAction = exposedImeSend != null,
             hasConversationContext = hasConversationContext,
             imeActionId = if (adjacentSendControls.isEmpty()) exposedImeSend else null,
