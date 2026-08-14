@@ -73,15 +73,18 @@ async function main(): Promise<void> {
 
   try {
     const address = await bridge.start();
-    const healthUrl = `http://127.0.0.1:${address.port}/healthz`;
-    await verifyHealth(healthUrl);
+    const loopbackHealthUrl = `http://127.0.0.1:${address.port}/healthz`;
+    const lanHealthUrl = `http://${lanAddress}:${address.port}/healthz`;
+    await verifyHealth(loopbackHealthUrl);
+    await verifyHealth(lanHealthUrl);
 
     process.stdout.write(
-      "\nREADY FOR THE PHONE — /healthz verified\n" +
+      "\nREADY FOR THE PHONE — loopback and selected LAN-IP /healthz verified on this laptop\n" +
         "Phase 1 only: the phone-to-laptop relay is running. ChatGPT is not connected yet.\n\n" +
         `Relay WebSocket URL:\n  ws://${lanAddress}:${address.port}/phone\n` +
         `Phone browser test:\n  http://${lanAddress}:${address.port}/healthz\n` +
         `Phone token:\n  ${config.phoneToken}\n\n` +
+        "The LAN-IP probe above ran from this laptop. Open the phone browser test URL on the physical phone before configuring Aster Room; that separate check can expose Wi-Fi client isolation or firewall blocking.\n" +
         "Keep the token local; do not paste it into ChatGPT.\n" +
         "In the Android app, select only the RosyTalk target app, enable its accessibility service, and tap Connect.\n" +
         "Message submission remains OFF until you enable its per-session switch on the phone.\n" +

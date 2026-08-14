@@ -28,14 +28,20 @@ The installable APK is written to `app/build/outputs/apk/debug/app-debug.apk`.
 1. Start the relay with its `PHONE_TOKEN` configured.
 2. Open the Android app and choose RosyTalk from the installed launchable-app list. The package
    name shown beside the app label is the actual boundary Android enforces.
-3. Enter the relay WebSocket URL and matching phone token.
-4. Tap **Open Accessibility settings** and enable **RosyTalk conversation bridge**.
-5. Return to the bridge and tap **Connect**.
-6. Open the intended RosyTalk conversation. Enable **Allow Aster actions for 15 minutes** only
+3. Enter the exact relay WebSocket URL printed by the Windows launcher and the matching phone
+   token. On a physical phone, this is the laptop private IPv4 URL, not `10.0.2.2`.
+4. Tap **Test relay reachability**. This token-free, bounded `/healthz` check distinguishes a
+   DNS/TCP/firewall failure from the later authenticated WebSocket handshake.
+5. Tap **Open Accessibility settings** and enable **RosyTalk conversation bridge**.
+6. Return to the bridge and tap **Connect**.
+7. Open the intended RosyTalk conversation. Enable **Allow Aster actions for 15 minutes** only
    when you want the bridge to submit replies or accept an explicitly authored Room expression.
 
-The emulator debug default is `ws://10.0.2.2:8787/phone`. Debug builds accept `ws://` for local
-development. Release builds require `wss://` in both code and Android network policy.
+The emulator debug default is `ws://10.0.2.2:8787/phone`. Physical-phone installs intentionally
+start with a blank relay field and keep the Windows-launcher guidance visible. A previously saved
+address remains visible, but emulator, loopback, and wildcard destinations are called out rather
+than silently replaced. Debug builds accept `ws://` for local development. Release builds require
+`wss://` in both code and Android network policy.
 
 The phone token field is masked. Its saved value is AES/GCM ciphertext, while the non-exportable
 AES key is held by Android Keystore. Android backups are disabled.
@@ -84,8 +90,11 @@ field; capture the RosyTalk app itself if you deliberately need a conversation s
 
 ## Phone protocol
 
-After the authenticated protocol-v2 hello, the phone handles exactly:
+After the authenticated protocol-v2 hello, the phone remains in `CONNECTING` until the relay
+returns an explicit `hello.accepted` event for protocol v2. It then handles exactly:
 
+- `surface.diagnose` with no parameters; returns bounded structural target-window metadata and
+  recognition failure stage, never UI content or content-derived identifiers
 - `chat.snapshot` with optional `maxItems` from 1 to 200
 - `chat.submit` with nonblank `text` up to 16,000 characters plus the `expectedRevision` and
   `expectedSnapshotId` returned by the exact visible snapshot Aster acted on
@@ -107,5 +116,6 @@ Each distinct visible state also receives a UUID lineage event, a parent event p
 phone-local sequence. The relay persists only the lineage metadata; message bodies remain
 ephemeral. A submit result echoes the exact snapshot event and revision it acted on, while still
 reporting `deliveryConfirmed: false`.
-The bounded on-screen activity log records only connection/method outcomes and is not persisted;
-it never includes credentials or conversation text.
+The bounded on-screen activity log records only connection/method outcomes and is not persisted.
+A bounded, process-local, defensively redacted event ring lets those diagnostics reappear after the
+setup screen returns from RosyTalk; it never includes credentials or conversation text.

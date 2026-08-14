@@ -18,9 +18,11 @@ node --import tsx relay/src/commission-mock.ts
 ```
 
 The command starts an ephemeral loopback relay and mock phone, connects through the real MCP
-transport, and exercises all seven v0.3 tools. It must report:
+transport, and exercises all eight v0.4 tools. It must report:
 
-- all seven required tools discovered and exercised;
+- all eight required tools discovered and exercised;
+- a metadata-only surface diagnostic containing no UI text, hints, descriptions, titles, drafts,
+  conversation identifiers, or content-derived hashes;
 - an incomplete revision-1 visible read;
 - a wait that receives revision 2;
 - a submission tied to revision 2 and its exact observation event ID;
@@ -42,9 +44,11 @@ This proves the relay/MCP protocol path. It does not prove Android or RosyTalk c
 5. In Aster Room, select the exact installed RosyTalk package. Record the package name
    shown by the bridge; do not infer it from the app label.
 6. Enter the printed `ws://<laptop-private-ip>:8787/phone` URL and `PHONE_TOKEN`.
-7. Enable **RosyTalk conversation bridge** in Android Accessibility settings.
-8. Return to Aster Room and tap **Connect**. Leave **Allow Aster actions for 15 minutes** off.
-9. Open the exact intended RosyTalk conversation and keep it visible and unlocked.
+7. Tap **Test relay reachability** and require the bounded `/healthz` result to report `ok=true`.
+8. Enable **RosyTalk conversation bridge** in Android Accessibility settings.
+9. Return to Aster Room and tap **Connect**. Leave **Allow Aster actions for 15 minutes** off.
+10. Require the activity log to say the relay accepted protocol v2, then open the exact intended
+    RosyTalk conversation and keep it visible and unlocked.
 
 The phone activity log must say that the protocol-v2 connection is ready. A browser response from
 `http://<laptop-private-ip>:8787/healthz` proves network reachability only; it does not prove that
@@ -56,16 +60,20 @@ Follow [Connect ChatGPT](CONNECT_CHATGPT.md):
 
 1. Create or select a Secure MCP Tunnel and associate both the correct Platform organization and
    the ChatGPT workspace.
-2. Run the current official named-profile flow for the actual `tunnel-client` binary.
-3. Verify externally that the profile sends `Authorization: Bearer <MCP_TOKEN>` to the local
-   `/mcp` endpoint for discovery and calls.
-4. Require `tunnel-client doctor --profile aster-rosytalk --explain` to pass.
-5. Keep `tunnel-client run --profile aster-rosytalk` alive.
-6. Enable ChatGPT developer mode, create the Tunnel connection, and review all seven v0.3 tools.
+2. Start `windows\Start-Aster-RosyTalk-Tunnel.cmd`. The helper uses supported ephemeral
+   environment configuration and does not create a named local profile.
+3. Require its `tunnel-client help quickstart` compatibility check and `doctor --explain`
+   diagnostics to pass. The helper supplies the independent MCP bearer for both discovery and
+   calls without disabling relay authentication.
+4. Keep the helper's `tunnel-client run` process alive and confirm the client is ready/polling
+   through the loopback admin URL it prints (`/readyz` or `/ui`).
+5. Keep the tunnel-client admin listener loopback-only.
+6. Enable ChatGPT developer mode, create the Tunnel connection, and review all eight v0.4 tools.
 7. Add that connection to a new ChatGPT conversation.
 
-Do not proceed if the bearer-header handoff has not been demonstrated with the actual binary.
-Do not make the relay unauthenticated to get discovery to pass.
+Do not proceed if diagnostics or tunnel readiness fail. Do not make the relay unauthenticated to
+get discovery to pass. A named profile is an optional alternative documented in
+[Connect ChatGPT](CONNECT_CHATGPT.md), not a requirement of this commissioning path.
 
 ## 3. Read-only acceptance
 
@@ -149,16 +157,20 @@ through `wait_for_update` or `read_visible`, without Melody copying that respons
    server receipt.
 4. Disconnect the phone, stop the tunnel client, then stop the relay.
 5. Record the APK SHA-256, bridge version, exact RosyTalk package/version, Android version,
-   tunnel-client version, tunnel profile name, discovered tool list, and result of each gate.
+   tunnel-client version, configuration mode (ephemeral environment or named profile), discovered
+   tool list, and result of each gate.
 
 ## Failure boundaries
 
 - **Mock fails:** relay/MCP build is not ready. Do not move to the phone.
 - **Phone connects but read fails:** the live RosyTalk accessibility tree does not satisfy the
-  chat-surface recognizer. Capture diagnostics without message bodies and adjust selectors only
-  against the exact installed RosyTalk version.
-- **Local MCP works but tunnel discovery fails:** inspect the named profile, workspace association,
-  tunnel permissions, and bearer-header handoff. This is not an Android failure.
+  chat-surface recognizer. Call `rosytalk_diagnose_surface`; retain only its bounded structural
+  metadata and exact failure stage, then adjust selectors only against the exact installed
+  RosyTalk version. The diagnostic must never contain message bodies, hints, descriptions,
+  titles, drafts, conversation identifiers, or content-derived hashes.
+- **Local MCP works but tunnel discovery fails:** rerun the helper diagnostics, inspect the
+  Platform-organization and ChatGPT-workspace associations, tunnel permissions, readiness, and
+  bearer-header configuration. This is not an Android failure.
 - **Submit is refused as stale:** read again and use the new revision plus event ID. Never override
   the stale check.
 - **Submit reports success but the message is absent:** treat the outcome as indeterminate; inspect

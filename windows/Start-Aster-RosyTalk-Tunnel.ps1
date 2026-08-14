@@ -77,6 +77,7 @@ try {
 
     Write-Host "Aster RosyTalk Bridge - Secure MCP Tunnel helper" -ForegroundColor Magenta
     Write-Host "This helper does not create a tunnel, API key, workspace permission, or ChatGPT connection."
+    Write-Host "It uses supported ephemeral environment configuration; it does not create or modify a local tunnel-client profile."
 
     if ($RelayPort -lt 1 -or $RelayPort -gt 65535) { throw "RelayPort must be between 1 and 65535." }
     $values = Read-DotEnv (Join-Path $projectRoot ".env")
@@ -88,6 +89,7 @@ try {
     if ([string]::IsNullOrWhiteSpace($TunnelId)) {
         $TunnelId = Read-Host "Tunnel ID from Platform tunnel settings"
     }
+    $TunnelId = $TunnelId.Trim()
     if ($TunnelId -notmatch '^tunnel_[0-9a-f]{32}$') {
         throw "TunnelId must be tunnel_ followed by exactly 32 lowercase hexadecimal characters."
     }
@@ -114,6 +116,12 @@ try {
     }
     & $tunnelClient --version
     if ($LASTEXITCODE -ne 0) { throw "tunnel-client --version failed with exit code $LASTEXITCODE." }
+
+    Write-Step "Checking tunnel-client quickstart compatibility"
+    & $tunnelClient help quickstart
+    if ($LASTEXITCODE -ne 0) {
+        throw "tunnel-client help quickstart failed with exit code $LASTEXITCODE. Download the current official client and retry."
+    }
 
     Write-Step "Checking the local relay"
     $healthStatus = Get-HttpStatus "http://127.0.0.1:$RelayPort/healthz"
@@ -150,7 +158,11 @@ try {
     }
 
     Write-Step "Starting the outbound tunnel"
+    Write-Host "Diagnostics passed using ephemeral environment configuration." -ForegroundColor Green
     Write-Host "Keep this window open during ChatGPT discovery and tool calls. Press Ctrl+C to stop."
+    Write-Host "Use the loopback admin URL printed by tunnel-client to inspect its /healthz, /readyz, and /ui surfaces."
+    Write-Host "Those are tunnel-client surfaces, separate from the relay's http://127.0.0.1:$RelayPort/healthz endpoint."
+    Write-Host "Keep the tunnel-client admin listener loopback-only. Do not expose it to the phone LAN."
     & $tunnelClient run
     if ($LASTEXITCODE -ne 0) { throw "tunnel-client stopped with exit code $LASTEXITCODE." }
 }

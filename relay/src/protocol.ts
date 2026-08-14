@@ -77,6 +77,7 @@ export const roomExpressionLineageSchema = z.object({
 export type RoomExpressionLineage = z.infer<typeof roomExpressionLineageSchema>;
 
 export const relayMethodSchema = z.enum([
+  "surface.diagnose",
   "chat.snapshot",
   "chat.submit",
   "room.expression",
@@ -105,7 +106,21 @@ export const phoneHelloSchema = z.object({
 
 export type PhoneHello = z.infer<typeof phoneHelloSchema>;
 
+export const helloAcceptedEventSchema = z.object({
+  type: z.literal("event"),
+  event: z.literal("hello.accepted"),
+  protocolVersion: z.literal(PROTOCOL_VERSION),
+}).strict();
+
+export type HelloAcceptedEvent = z.infer<typeof helloAcceptedEventSchema>;
+
 export const relayRequestSchema = z.discriminatedUnion("method", [
+  z.object({
+    type: z.literal("request"),
+    id: z.string().uuid(),
+    method: z.literal("surface.diagnose"),
+    params: z.object({}).strict(),
+  }),
   z.object({
     type: z.literal("request"),
     id: z.string().uuid(),
@@ -174,6 +189,82 @@ export const screenBoundsSchema = z
     ({ left, top, right, bottom }) => right >= left && bottom >= top,
     "Invalid screen bounds",
   );
+
+export const MAX_DIAGNOSTIC_CANDIDATES = 12;
+export const MAX_DIAGNOSTIC_ACTIONS = 32;
+export const MAX_DIAGNOSTIC_NODES = 2_000;
+export const MAX_DIAGNOSTIC_METADATA_CHARACTERS = 160;
+
+const diagnosticBoundsSchema = z
+  .object({
+    left: z.number().int().min(-100_000).max(100_000),
+    top: z.number().int().min(-100_000).max(100_000),
+    right: z.number().int().min(-100_000).max(100_000),
+    bottom: z.number().int().min(-100_000).max(100_000),
+  })
+  .strict()
+  .refine(
+    ({ left, top, right, bottom }) => right >= left && bottom >= top,
+    "Invalid diagnostic bounds",
+  );
+
+export const surfaceFailureStageSchema = z.enum([
+  "target_not_configured",
+  "active_root_unavailable",
+  "target_not_foreground",
+  "tree_truncated",
+  "composer_missing",
+  "composer_ambiguous",
+  "send_control_ambiguous",
+  "message_composer_signal_missing",
+  "ime_send_action_missing",
+  "conversation_context_missing",
+  "ready",
+]);
+
+export const surfaceControlMetadataSchema = z
+  .object({
+    className: z.string().max(MAX_DIAGNOSTIC_METADATA_CHARACTERS).nullable(),
+    viewId: z.string().max(MAX_DIAGNOSTIC_METADATA_CHARACTERS).nullable(),
+    bounds: diagnosticBoundsSchema,
+    enabled: z.boolean(),
+    supportedActionIds: z
+      .array(z.number().int().min(-2_147_483_648).max(2_147_483_647))
+      .max(MAX_DIAGNOSTIC_ACTIONS),
+    supportedActionsTruncated: z.boolean(),
+  })
+  .strict();
+
+export const surfaceDiagnosticSchema = z
+  .object({
+    scope: z.literal("foreground_target_metadata_only"),
+    targetConfigured: z.boolean(),
+    targetForeground: z.boolean(),
+    rootBounds: diagnosticBoundsSchema.nullable(),
+    windowBounds: diagnosticBoundsSchema.nullable(),
+    observedNodeCount: z.number().int().min(0).max(MAX_DIAGNOSTIC_NODES),
+    nodeTraversalTruncated: z.boolean(),
+    composerCandidateCount: z.number().int().min(0).max(MAX_DIAGNOSTIC_NODES),
+    sendControlCandidateCount: z.number().int().min(0).max(MAX_DIAGNOSTIC_NODES),
+    composerCandidates: z
+      .array(surfaceControlMetadataSchema)
+      .max(MAX_DIAGNOSTIC_CANDIDATES),
+    sendControlCandidates: z
+      .array(surfaceControlMetadataSchema)
+      .max(MAX_DIAGNOSTIC_CANDIDATES),
+    composerCandidatesTruncated: z.boolean(),
+    sendControlCandidatesTruncated: z.boolean(),
+    singleComposerCandidate: z.boolean(),
+    adjacentSendControlCount: z.number().int().min(0).max(MAX_DIAGNOSTIC_NODES),
+    composerHasAdjacentSendControl: z.boolean(),
+    composerHasMessageSignal: z.boolean(),
+    composerHasImeSendAction: z.boolean(),
+    conversationContextAboveComposer: z.boolean(),
+    failureStage: surfaceFailureStageSchema,
+  })
+  .strict();
+
+export type SurfaceDiagnostic = z.infer<typeof surfaceDiagnosticSchema>;
 
 export const visibleChatItemSchema = z.object({
   localId: idSchema,
@@ -260,8 +351,10 @@ export type ChatUpdatedEvent = z.infer<typeof chatUpdatedEventSchema>;
 export function parseResult(
   method: RelayMethod,
   value: unknown,
-): ChatSnapshot | SubmitResult | RoomExpressionResult {
+): SurfaceDiagnostic | ChatSnapshot | SubmitResult | RoomExpressionResult {
   switch (method) {
+    case "surface.diagnose":
+      return surfaceDiagnosticSchema.parse(value);
     case "chat.snapshot":
       return chatSnapshotSchema.parse(value);
     case "chat.submit":

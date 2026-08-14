@@ -1,6 +1,8 @@
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
+import { EventEmitter } from "node:events";
 import { mkdtempSync, renameSync, rmSync } from "node:fs";
+import type { ServerResponse } from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
@@ -11,6 +13,7 @@ import type { Transport } from "@modelcontextprotocol/sdk/shared/transport.js";
 import WebSocket from "ws";
 import {
   createRosyTalkBridgeApp,
+  registerMcpResponseCleanup,
   type RosyTalkBridgeApp,
 } from "../src/app.js";
 import type { BridgeConfig } from "../src/config.js";
@@ -19,6 +22,8 @@ import {
   type ChatSnapshot,
   type PhoneHello,
   type RelayRequest,
+  type SurfaceDiagnostic,
+  helloAcceptedEventSchema,
   relayRequestSchema,
 } from "../src/protocol.js";
 
@@ -84,6 +89,49 @@ function snapshot(revision: number, text = "Visible remote text"): ChatSnapshot 
   };
 }
 
+function surfaceDiagnostic(): SurfaceDiagnostic {
+  return {
+    scope: "foreground_target_metadata_only",
+    targetConfigured: true,
+    targetForeground: true,
+    rootBounds: { left: 0, top: 0, right: 1080, bottom: 1920 },
+    windowBounds: { left: 0, top: 0, right: 1080, bottom: 1920 },
+    observedNodeCount: 24,
+    nodeTraversalTruncated: false,
+    composerCandidateCount: 1,
+    sendControlCandidateCount: 1,
+    composerCandidates: [
+      {
+        className: "android.widget.EditText",
+        viewId: "app.rosytalk:id/message_composer",
+        bounds: { left: 20, top: 900, right: 760, bottom: 1010 },
+        enabled: true,
+        supportedActionIds: [2_097_152],
+        supportedActionsTruncated: false,
+      },
+    ],
+    sendControlCandidates: [
+      {
+        className: "android.widget.ImageButton",
+        viewId: "app.rosytalk:id/send_button",
+        bounds: { left: 780, top: 900, right: 1060, bottom: 1010 },
+        enabled: true,
+        supportedActionIds: [16],
+        supportedActionsTruncated: false,
+      },
+    ],
+    composerCandidatesTruncated: false,
+    sendControlCandidatesTruncated: false,
+    singleComposerCandidate: true,
+    adjacentSendControlCount: 1,
+    composerHasAdjacentSendControl: true,
+    composerHasMessageSignal: true,
+    composerHasImeSendAction: false,
+    conversationContextAboveComposer: true,
+    failureStage: "ready",
+  };
+}
+
 function config(overrides: Partial<BridgeConfig> = {}): BridgeConfig {
   return {
     host: "127.0.0.1",
@@ -140,6 +188,7 @@ async function connectPhone(
   } = {},
 ): Promise<PhoneConnection> {
   const requests: RelayRequest[] = [];
+  let helloAccepted = false;
   const socket = new WebSocket(harness.phoneUrl, {
     headers: { Authorization: `Bearer ${PHONE_TOKEN}` },
   });
@@ -149,6 +198,10 @@ async function connectPhone(
     try {
       value = JSON.parse(raw.toString());
     } catch {
+      return;
+    }
+    if (helloAcceptedEventSchema.safeParse(value).success) {
+      helloAccepted = true;
       return;
     }
     const parsed = relayRequestSchema.safeParse(value);
@@ -184,7 +237,7 @@ async function connectPhone(
       },
     }),
   );
-  await waitUntil(() => harness.app.broker.status().ready);
+  await waitUntil(() => harness.app.broker.status().ready && helloAccepted);
 
   return { requests, socket };
 }
@@ -206,6 +259,9 @@ function sendError(
 
 function happyResponder(request: RelayRequest, socket: WebSocket): void {
   switch (request.method) {
+    case "surface.diagnose":
+      sendOk(socket, request, surfaceDiagnostic());
+      return;
     case "chat.snapshot":
       sendOk(socket, request, snapshot(1));
       return;
@@ -270,6 +326,35 @@ function errorText(result: ImmediateToolResult): string {
 }
 
 describe("RosyTalk relay integration", () => {
+  test("cleans up per-request MCP resources exactly once", async () => {
+    const response = new EventEmitter() as unknown as ServerResponse;
+    let transportCloseCount = 0;
+    let serverCloseCount = 0;
+    const cleanup = registerMcpResponseCleanup(
+      response,
+      {
+        close: async () => {
+          transportCloseCount += 1;
+        },
+      },
+      {
+        close: async () => {
+          serverCloseCount += 1;
+        },
+      },
+    );
+
+    response.emit("finish");
+    response.emit("close");
+    await cleanup();
+    await cleanup();
+
+    assert.equal(transportCloseCount, 1);
+    assert.equal(serverCloseCount, 1);
+    assert.equal(response.listenerCount("finish"), 0);
+    assert.equal(response.listenerCount("close"), 0);
+  });
+
   test("rejects unauthorized phone and MCP clients", async (t) => {
     const harness = await startHarness(t);
 
@@ -304,6 +389,30 @@ describe("RosyTalk relay integration", () => {
     await transport.close();
   });
 
+  test("returns bounded metadata-only surface diagnostics", async (t) => {
+    const harness = await startHarness(t);
+    const phone = await connectPhone(harness, { responder: happyResponder });
+    const client = await connectMcp(harness);
+
+    const result = structured(
+      immediate(
+        await client.callTool({
+          name: "rosytalk_diagnose_surface",
+          arguments: {},
+        }),
+      ),
+    );
+
+    assert.equal(result.scope, "foreground_target_metadata_only");
+    assert.equal(result.failureStage, "ready");
+    assert.equal(result.observedNodeCount, 24);
+    assert.deepEqual(phone.requests.map(({ method }) => method), ["surface.diagnose"]);
+    assert.doesNotMatch(
+      JSON.stringify(result),
+      /"(?:text|hintText|contentDescription|windowTitle|draft|conversationHash)"\s*:/i,
+    );
+  });
+
   test("exposes scoped status, visible read, wait, and submit tools", async (t) => {
     const harness = await startHarness(t);
     const phone = await connectPhone(harness, { responder: happyResponder });
@@ -315,6 +424,7 @@ describe("RosyTalk relay integration", () => {
       [
         "rosytalk_status",
         "rosytalk_room_status",
+        "rosytalk_diagnose_surface",
         "rosytalk_read_visible",
         "rosytalk_wait_for_update",
         "rosytalk_read_lineage",
@@ -322,16 +432,26 @@ describe("RosyTalk relay integration", () => {
         "rosytalk_set_expression",
       ],
     );
-    for (const tool of listing.tools.slice(0, 5)) {
+    for (const tool of listing.tools.slice(0, 6)) {
       assert.equal(tool.annotations?.readOnlyHint, true, tool.name);
       assert.equal(tool.annotations?.destructiveHint, false, tool.name);
     }
-    const submitTool = listing.tools[5];
+    const diagnosticTool = listing.tools.find(({ name }) => name === "rosytalk_diagnose_surface");
+    assert.ok(diagnosticTool);
+    assert.equal(
+      (diagnosticTool.inputSchema as Record<string, unknown>).additionalProperties,
+      false,
+    );
+    assert.equal(
+      (diagnosticTool.outputSchema as Record<string, unknown>).additionalProperties,
+      false,
+    );
+    const submitTool = listing.tools.find(({ name }) => name === "rosytalk_submit_message");
     assert.ok(submitTool);
     assert.equal(submitTool.annotations?.readOnlyHint, false);
     assert.equal(submitTool.annotations?.openWorldHint, true);
     assert.equal(submitTool.annotations?.destructiveHint, true);
-    const expressionTool = listing.tools[6];
+    const expressionTool = listing.tools.find(({ name }) => name === "rosytalk_set_expression");
     assert.ok(expressionTool);
     assert.equal(expressionTool.annotations?.readOnlyHint, false);
     assert.equal(expressionTool.annotations?.openWorldHint, false);

@@ -1,4 +1,5 @@
 import { createServer, type Server as HttpServer } from "node:http";
+import type { ServerResponse } from "node:http";
 import { createMcpExpressApp } from "@modelcontextprotocol/sdk/server/express.js";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import type { Transport } from "@modelcontextprotocol/sdk/shared/transport.js";
@@ -24,6 +25,42 @@ function jsonRpcError(message: string) {
     error: { code: -32000, message },
     id: null,
   };
+}
+
+interface AsyncClosable {
+  close(): Promise<unknown>;
+}
+
+/**
+ * Register per-request MCP cleanup before request handling begins. Node may emit
+ * both `finish` and `close` for one response, so the returned cleanup function
+ * and both event handlers share one guarded promise.
+ */
+export function registerMcpResponseCleanup(
+  response: ServerResponse,
+  transport: AsyncClosable,
+  mcpServer: AsyncClosable,
+): () => Promise<void> {
+  let cleanupPromise: Promise<void> | undefined;
+
+  const onComplete = () => {
+    void cleanup();
+  };
+  const cleanup = (): Promise<void> => {
+    if (!cleanupPromise) {
+      response.removeListener("finish", onComplete);
+      response.removeListener("close", onComplete);
+      cleanupPromise = Promise.allSettled([
+        transport.close(),
+        mcpServer.close(),
+      ]).then(() => undefined);
+    }
+    return cleanupPromise;
+  };
+
+  response.once("finish", onComplete);
+  response.once("close", onComplete);
+  return cleanup;
 }
 
 export function createRosyTalkBridgeApp(config: BridgeConfig): RosyTalkBridgeApp {
@@ -63,14 +100,12 @@ export function createRosyTalkBridgeApp(config: BridgeConfig): RosyTalkBridgeApp
     // Omitting a session generator selects the SDK's stateless mode. The cast works
     // around an exact-optional typing mismatch inside SDK 1.30.0's Node wrapper.
     const transport = new StreamableHTTPServerTransport();
+    const cleanup = registerMcpResponseCleanup(response, transport, mcpServer);
     try {
       await mcpServer.connect(transport as unknown as Transport);
       await transport.handleRequest(request, response, request.body);
-      response.on("close", () => {
-        void transport.close();
-        void mcpServer.close();
-      });
     } catch (error) {
+      await cleanup();
       process.stderr.write(`MCP request failed: ${String(error)}\n`);
       if (!response.headersSent) {
         response.status(500).json(jsonRpcError("Internal server error"));

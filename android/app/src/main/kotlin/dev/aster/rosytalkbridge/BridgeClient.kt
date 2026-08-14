@@ -13,7 +13,6 @@ import okhttp3.WebSocketListener
 import org.json.JSONObject
 import java.net.ConnectException
 import java.net.SocketTimeoutException
-import java.net.URI
 import java.net.UnknownHostException
 import java.nio.charset.StandardCharsets
 import java.time.Instant
@@ -31,6 +30,7 @@ class BridgeClient(
     private val appContext = context.applicationContext
     private val debugBuild =
         appContext.applicationInfo.flags and ApplicationInfo.FLAG_DEBUGGABLE != 0
+    private val emulatorDevice = isProbablyEmulator()
     private val mainHandler = Handler(Looper.getMainLooper())
     private val httpClient = OkHttpClient.Builder()
         .connectTimeout(15, TimeUnit.SECONDS)
@@ -68,9 +68,6 @@ class BridgeClient(
             throw IllegalArgumentException("Phone token is unexpectedly long")
         }
         val targetPackage = BridgePreferences.targetPackage(appContext)
-        if (targetPackage.isBlank()) {
-            throw IllegalArgumentException("Select the RosyTalk app first")
-        }
         if (targetPackage == appContext.packageName) {
             throw IllegalArgumentException("The bridge cannot target itself")
         }
@@ -153,18 +150,37 @@ class BridgeClient(
             }
             if (!webSocket.send(createHello().toString())) {
                 webSocket.close(CLOSE_PROTOCOL_ERROR, "Hello could not be sent")
-                finishGeneration(generation)
-                updateState(ConnectionState.DISCONNECTED, "Could not send phone hello")
+                val failureDetail = "Could not send phone hello"
+                if (finishGeneration(generation, failureDetail)) {
+                    listener.onConnectionState(ConnectionState.DISCONNECTED, failureDetail)
+                    listener.onActivity(failureDetail)
+                }
                 return
             }
 
-            synchronized(lock) {
-                if (activeGeneration != generation) return
-                connectionState = ConnectionState.READY
-                detail = "Connected and ready"
+            val waitingDetail = "Relay reached; waiting for protocol acceptance…"
+            val waiting = synchronized(lock) {
+                if (activeGeneration != generation || connectionState != ConnectionState.CONNECTING) {
+                    false
+                } else {
+                    detail = waitingDetail
+                    true
+                }
             }
-            listener.onConnectionState(ConnectionState.READY, "Connected and ready")
-            listener.onActivity("Protocol v2 hello sent; scoped chat requests are ready")
+            if (!waiting) return
+            listener.onConnectionState(ConnectionState.CONNECTING, waitingDetail)
+            listener.onActivity("Protocol v2 hello sent; waiting for relay acceptance")
+            mainHandler.postDelayed(
+                {
+                    val timeoutDetail =
+                        "Relay did not acknowledge protocol v2; update or restart the relay"
+                    if (!finishConnectingGeneration(generation, timeoutDetail)) return@postDelayed
+                    webSocket.close(CLOSE_PROTOCOL_ERROR, "Hello acknowledgement timed out")
+                    listener.onConnectionState(ConnectionState.DISCONNECTED, timeoutDetail)
+                    listener.onActivity(timeoutDetail)
+                },
+                HELLO_ACK_TIMEOUT_MS,
+            )
         }
 
         override fun onMessage(webSocket: WebSocket, text: String) {
@@ -173,6 +189,55 @@ class BridgeClient(
                 JSONObject(text)
             } catch (_: Exception) {
                 listener.onActivity("Ignored malformed relay JSON")
+                return
+            }
+
+            if (
+                request.optString("type") == "event" &&
+                request.optString("event") == "hello.accepted"
+            ) {
+                if (exactInteger(request.opt("protocolVersion")) != PROTOCOL_VERSION) {
+                    val failureDetail = "Relay accepted an incompatible protocol version"
+                    if (finishGeneration(generation, failureDetail)) {
+                        webSocket.close(CLOSE_PROTOCOL_ERROR, "Protocol version mismatch")
+                        listener.onConnectionState(ConnectionState.DISCONNECTED, failureDetail)
+                        listener.onActivity(failureDetail)
+                    }
+                    return
+                }
+                val readyDetail = "Connected and ready"
+                val accepted = synchronized(lock) {
+                    if (
+                        activeGeneration != generation ||
+                        connectionState != ConnectionState.CONNECTING
+                    ) {
+                        false
+                    } else {
+                        connectionState = ConnectionState.READY
+                        detail = readyDetail
+                        true
+                    }
+                }
+                if (accepted) {
+                    listener.onConnectionState(ConnectionState.READY, readyDetail)
+                    listener.onActivity(
+                        "Relay accepted protocol v2; scoped chat and metadata diagnostics are ready",
+                    )
+                }
+                return
+            }
+
+            val ready = synchronized(lock) {
+                activeGeneration == generation &&
+                    connectionState == ConnectionState.READY
+            }
+            if (!ready) {
+                val failureDetail = "Relay sent data before accepting the phone hello"
+                if (finishGeneration(generation, failureDetail)) {
+                    webSocket.close(CLOSE_PROTOCOL_ERROR, "Hello acknowledgement required")
+                    listener.onConnectionState(ConnectionState.DISCONNECTED, failureDetail)
+                    listener.onActivity(failureDetail)
+                }
                 return
             }
             if (request.optString("type") != "request") {
@@ -208,17 +273,18 @@ class BridgeClient(
         }
 
         override fun onClosed(webSocket: WebSocket, code: Int, reason: String) {
-            if (!finishGeneration(generation)) return
-            updateState(ConnectionState.DISCONNECTED, "Relay disconnected (code $code)")
+            val closedDetail = "Relay disconnected (code $code)"
+            if (!finishGeneration(generation, closedDetail)) return
+            listener.onConnectionState(ConnectionState.DISCONNECTED, closedDetail)
             listener.onActivity("Relay connection closed")
         }
 
         override fun onFailure(webSocket: WebSocket, error: Throwable, response: Response?) {
             val responseCode = response?.code
             response?.close()
-            if (!finishGeneration(generation)) return
             val failureDetail = friendlyFailure(error, responseCode)
-            updateState(ConnectionState.DISCONNECTED, failureDetail)
+            if (!finishGeneration(generation, failureDetail)) return
+            listener.onConnectionState(ConnectionState.DISCONNECTED, failureDetail)
             listener.onActivity(failureDetail)
         }
     }
@@ -234,6 +300,15 @@ class BridgeClient(
         listener.onActivity("Received $loggedMethod")
         val parsed = try {
             when (method) {
+                "surface.diagnose" -> {
+                    if (params.length() != 0) {
+                        throw BridgeException(
+                            "INVALID_PARAMS",
+                            "surface.diagnose takes no parameters",
+                        )
+                    }
+                    PendingOperation.SurfaceDiagnostic
+                }
                 "chat.snapshot" -> PendingOperation.Snapshot(optionalInt(params, "maxItems", 100, 1, 200))
                 "chat.submit" -> PendingOperation.Submit(
                     text = requiredString(params, "text"),
@@ -264,6 +339,9 @@ class BridgeClient(
             try {
                 if (!isGenerationActive(generation)) return@post
                 val result = when (parsed) {
+                    PendingOperation.SurfaceDiagnostic -> requireAccessibilityService()
+                        .captureSurfaceDiagnostic()
+                        .toJson()
                     is PendingOperation.Expression -> BridgeRuntime.applyRemoteRoomExpression(
                         expression = parsed.expression,
                         caption = parsed.caption,
@@ -310,7 +388,7 @@ class BridgeClient(
             appContext.packageManager.getPackageInfo(appContext.packageName, 0).versionName
         } catch (_: Exception) {
             null
-        } ?: "0.3.0"
+        } ?: "0.4.0"
         val androidVersion = Build.VERSION.RELEASE?.takeIf { it.isNotBlank() }
             ?: Build.VERSION.SDK_INT.toString()
         val targetPackage = BridgePreferences.targetPackage(appContext)
@@ -433,6 +511,20 @@ class BridgeClient(
         return number.toInt()
     }
 
+    private fun exactInteger(value: Any?): Int? {
+        val number = value as? Number ?: return null
+        val doubleValue = number.toDouble()
+        if (
+            !doubleValue.isFinite() ||
+            floor(doubleValue) != doubleValue ||
+            doubleValue < Int.MIN_VALUE.toDouble() ||
+            doubleValue > Int.MAX_VALUE.toDouble()
+        ) {
+            return null
+        }
+        return doubleValue.toInt()
+    }
+
     private fun requiredLong(
         params: JSONObject,
         key: String,
@@ -495,30 +587,7 @@ class BridgeClient(
     }
 
     private fun normalizeRelayUrl(rawUrl: String): String {
-        val uri = try {
-            URI(rawUrl.trim())
-        } catch (_: Exception) {
-            throw IllegalArgumentException("Relay URL is invalid")
-        }
-        val scheme = uri.scheme?.lowercase()
-        if (scheme != "ws" && scheme != "wss") {
-            throw IllegalArgumentException("Relay URL must use ws:// or wss://")
-        }
-        if (!debugBuild && scheme != "wss") {
-            throw IllegalArgumentException("Release builds require a wss:// relay URL")
-        }
-        if (uri.host.isNullOrBlank() || uri.userInfo != null || uri.query != null || uri.fragment != null) {
-            throw IllegalArgumentException("Relay URL must contain only a host, port, and /phone path")
-        }
-        val path = uri.path.orEmpty()
-        if (path.isNotEmpty() && path != "/" && path != PHONE_PATH && path != "$PHONE_PATH/") {
-            throw IllegalArgumentException("Relay URL path must be /phone")
-        }
-        return try {
-            URI(scheme, null, uri.host, uri.port, PHONE_PATH, null, null).toASCIIString()
-        } catch (_: Exception) {
-            throw IllegalArgumentException("Relay URL is invalid")
-        }
+        return RelayEndpoint.parse(rawUrl, debugBuild, emulatorDevice).webSocketUrl
     }
 
     private fun isCanonicalUuid(value: String): Boolean = try {
@@ -530,32 +599,53 @@ class BridgeClient(
     private fun isGenerationActive(generation: Long): Boolean =
         synchronized(lock) { activeGeneration == generation }
 
-    private fun finishGeneration(generation: Long): Boolean = synchronized(lock) {
+    private fun finishGeneration(generation: Long, newDetail: String): Boolean = synchronized(lock) {
         if (activeGeneration != generation) return@synchronized false
         activeGeneration += 1
         currentSocket = null
         connectionState = ConnectionState.DISCONNECTED
+        detail = newDetail
         true
     }
 
-    private fun updateState(newState: ConnectionState, newDetail: String) {
-        connectionState = newState
-        detail = newDetail
-        listener.onConnectionState(newState, newDetail)
-    }
+    private fun finishConnectingGeneration(generation: Long, newDetail: String): Boolean =
+        synchronized(lock) {
+            if (
+                activeGeneration != generation ||
+                connectionState != ConnectionState.CONNECTING
+            ) {
+                return@synchronized false
+            }
+            activeGeneration += 1
+            currentSocket = null
+            connectionState = ConnectionState.DISCONNECTED
+            detail = newDetail
+            true
+        }
 
     private fun friendlyFailure(error: Throwable, responseCode: Int?): String {
-        if (responseCode == 401 || responseCode == 403) return "Relay rejected the phone token"
+        if (responseCode == 401) return "Relay rejected the phone token"
+        if (responseCode == 403) return "Relay or secure gateway refused the phone connection"
+        val endpoint = try {
+            lastUrl?.let { RelayEndpoint.parse(it, debugBuild, emulatorDevice).displayEndpoint.take(120) }
+        } catch (_: Exception) {
+            null
+        } ?: "the configured relay"
+        if (responseCode != null) {
+            return "Relay was reached at $endpoint, but WebSocket upgrade failed (HTTP $responseCode)"
+        }
         return when (error) {
-            is UnknownHostException -> "Relay host was not found"
-            is ConnectException -> "Could not reach the relay"
-            is SocketTimeoutException -> "Relay connection timed out"
-            is SSLException -> "Secure relay handshake failed"
-            else -> "Relay WebSocket connection failed"
+            is UnknownHostException -> "Relay host was not found at $endpoint"
+            is ConnectException ->
+                "TCP connection to $endpoint failed before token authentication; run Test relay reachability"
+            is SocketTimeoutException -> "Relay connection to $endpoint timed out before authentication"
+            is SSLException -> "Secure relay handshake failed at $endpoint before authentication"
+            else -> "Relay WebSocket connection failed at $endpoint before protocol acceptance"
         }
     }
 
     private sealed interface PendingOperation {
+        data object SurfaceDiagnostic : PendingOperation
         data class Snapshot(val maxItems: Int) : PendingOperation
         data class Submit(
             val text: String,
@@ -572,9 +662,9 @@ class BridgeClient(
 
     private companion object {
         const val PROTOCOL_VERSION = 2
-        const val PHONE_PATH = "/phone"
         const val CLOSE_NORMAL = 1000
         const val CLOSE_PROTOCOL_ERROR = 1002
+        const val HELLO_ACK_TIMEOUT_MS = 8_000L
         const val MAX_TOKEN_CHARACTERS = 8192
         const val MAX_DEVICE_FIELD = 200
         const val MAX_VERSION_FIELD = 50

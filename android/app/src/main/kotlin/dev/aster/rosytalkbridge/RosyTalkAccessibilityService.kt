@@ -9,6 +9,7 @@ import android.os.Looper
 import android.util.Base64
 import android.view.accessibility.AccessibilityEvent
 import android.view.accessibility.AccessibilityNodeInfo
+import android.view.accessibility.AccessibilityWindowInfo
 import java.nio.charset.StandardCharsets
 import java.security.MessageDigest
 import java.time.Instant
@@ -164,6 +165,71 @@ class RosyTalkAccessibilityService : AccessibilityService() {
         )
         } finally {
             recycleCapturedNodes(root, snapshotNodes)
+        }
+    }
+
+    /**
+     * Returns only bounded structural metadata for the selected app's active window. The active
+     * root is never traversed unless it belongs to the configured target package, so diagnostics
+     * cannot inspect or describe an unrelated foreground app.
+     */
+    fun captureSurfaceDiagnostic(): SurfaceDiagnostic {
+        check(Looper.myLooper() == Looper.getMainLooper()) {
+            "Accessibility surface diagnostics must run on the main thread"
+        }
+        val targetPackage = BridgePreferences.targetPackage(this)
+        if (targetPackage.isBlank()) {
+            return emptySurfaceDiagnostic(SurfaceFailureStage.TARGET_NOT_CONFIGURED)
+        }
+
+        val root = rootInActiveWindow
+            ?: return emptySurfaceDiagnostic(SurfaceFailureStage.ACTIVE_ROOT_UNAVAILABLE)
+        val diagnosticNodes = ArrayList<AccessibilityNodeInfo>()
+        try {
+            // Do not collect bounds, metadata, children, or any other property from a non-target
+            // window. packageName is read solely for this fail-closed equality check.
+            if (root.packageName?.toString() != targetPackage) {
+                return emptySurfaceDiagnostic(SurfaceFailureStage.TARGET_NOT_FOREGROUND)
+            }
+
+            val traversalTruncated = collectNodes(root, diagnosticNodes, 0, isRoot = true)
+            val analysis = analyzeChatSurface(root, diagnosticNodes)
+            val reportedStage = if (traversalTruncated) {
+                // A truncated tree cannot establish uniqueness, even if the observed subset looks
+                // like a chat surface.
+                SurfaceFailureStage.TREE_TRUNCATED
+            } else {
+                analysis.failureStage
+            }
+            return SurfaceDiagnostic(
+                targetConfigured = true,
+                targetForeground = true,
+                rootBounds = nodeBounds(root).toScreenBounds(),
+                windowBounds = targetWindowBounds(root),
+                observedNodeCount = diagnosticNodes.size,
+                nodeTraversalTruncated = traversalTruncated,
+                composerCandidateCount = analysis.composerCandidates.size,
+                sendControlCandidateCount = analysis.sendControlCandidates.size,
+                composerCandidates = analysis.composerCandidates
+                    .take(MAX_DIAGNOSTIC_CANDIDATES)
+                    .map(::diagnosticMetadata),
+                sendControlCandidates = analysis.sendControlCandidates
+                    .take(MAX_DIAGNOSTIC_CANDIDATES)
+                    .map(::diagnosticMetadata),
+                composerCandidatesTruncated =
+                    analysis.composerCandidates.size > MAX_DIAGNOSTIC_CANDIDATES,
+                sendControlCandidatesTruncated =
+                    analysis.sendControlCandidates.size > MAX_DIAGNOSTIC_CANDIDATES,
+                singleComposerCandidate = analysis.composerCandidates.size == 1,
+                adjacentSendControlCount = analysis.adjacentSendControls.size,
+                composerHasAdjacentSendControl = analysis.adjacentSendControls.isNotEmpty(),
+                composerHasMessageSignal = analysis.composerHasMessageSignal,
+                composerHasImeSendAction = analysis.composerHasImeSendAction,
+                conversationContextAboveComposer = analysis.hasConversationContext,
+                failureStage = reportedStage,
+            )
+        } finally {
+            recycleCapturedNodes(root, diagnosticNodes)
         }
     }
 
@@ -364,17 +430,25 @@ class RosyTalkAccessibilityService : AccessibilityService() {
         output: MutableList<AccessibilityNodeInfo>,
         depth: Int,
         isRoot: Boolean = false,
-    ) {
+    ): Boolean {
         if (depth > MAX_TREE_DEPTH || output.size >= MAX_TREE_NODES || !node.isVisibleToUser) {
             if (!isRoot) recycleNode(node)
-            return
+            return depth > MAX_TREE_DEPTH || output.size >= MAX_TREE_NODES
         }
         output += node
-        val childCount = node.childCount.coerceAtMost(MAX_CHILDREN_PER_NODE)
+        val rawChildCount = node.childCount
+        val childCount = rawChildCount.coerceAtMost(MAX_CHILDREN_PER_NODE)
+        var truncated = rawChildCount > childCount
         for (index in 0 until childCount) {
-            node.getChild(index)?.let { child -> collectNodes(child, output, depth + 1) }
-            if (output.size >= MAX_TREE_NODES) break
+            node.getChild(index)?.let { child ->
+                if (collectNodes(child, output, depth + 1)) truncated = true
+            }
+            if (output.size >= MAX_TREE_NODES) {
+                if (index + 1 < childCount) truncated = true
+                break
+            }
         }
+        return truncated
     }
 
     private fun recycleCapturedNodes(
@@ -413,6 +487,50 @@ class RosyTalkAccessibilityService : AccessibilityService() {
         root: AccessibilityNodeInfo,
         nodes: List<AccessibilityNodeInfo>,
     ): ChatSurface {
+        val analysis = analyzeChatSurface(root, nodes)
+        when (analysis.failureStage) {
+            SurfaceFailureStage.COMPOSER_MISSING -> throw BridgeException(
+                "NOT_CHAT_SURFACE",
+                "The target window does not expose a bottom message composer",
+            )
+            SurfaceFailureStage.COMPOSER_AMBIGUOUS -> throw BridgeException(
+                "NOT_CHAT_SURFACE",
+                "The target window exposes multiple bottom message composers",
+            )
+            SurfaceFailureStage.SEND_CONTROL_AMBIGUOUS -> throw BridgeException(
+                "NOT_CHAT_SURFACE",
+                "The target window exposes multiple adjacent send controls",
+            )
+            SurfaceFailureStage.MESSAGE_COMPOSER_SIGNAL_MISSING -> throw BridgeException(
+                "NOT_CHAT_SURFACE",
+                "The composer lacks an explicit message-composer signal",
+            )
+            SurfaceFailureStage.IME_SEND_ACTION_MISSING -> throw BridgeException(
+                "NOT_CHAT_SURFACE",
+                "The composer lacks an adjacent Send control or an exposed IME send action",
+            )
+            SurfaceFailureStage.CONVERSATION_CONTEXT_MISSING -> throw BridgeException(
+                "NOT_CHAT_SURFACE",
+                "No visible conversation context appears above the message composer",
+            )
+            SurfaceFailureStage.READY -> Unit
+            else -> throw BridgeException(
+                "NOT_CHAT_SURFACE",
+                "The target window could not be identified as a safe chat surface",
+            )
+        }
+        val composer = requireNotNull(analysis.composerCandidates.singleOrNull())
+        return ChatSurface(
+            composer = composer,
+            sendControl = analysis.adjacentSendControls.singleOrNull(),
+            imeActionId = if (analysis.adjacentSendControls.isEmpty()) analysis.imeActionId else null,
+        )
+    }
+
+    private fun analyzeChatSurface(
+        root: AccessibilityNodeInfo,
+        nodes: List<AccessibilityNodeInfo>,
+    ): ChatSurfaceAnalysis {
         val rootBounds = nodeBounds(root)
         val effectiveHeight = rootBounds.height().takeIf { it > 0 } ?: resources.displayMetrics.heightPixels
         val effectiveWidth = rootBounds.width().takeIf { it > 0 } ?: resources.displayMetrics.widthPixels
@@ -423,24 +541,31 @@ class RosyTalkAccessibilityService : AccessibilityService() {
             !bounds.isEmpty() && bounds.centerY() >= bottomThreshold &&
                 bounds.width() >= (effectiveWidth * MIN_COMPOSER_WIDTH_RATIO).toInt()
         }
+        val sendControlCandidates = nodes.filter { node ->
+            node.isVisibleToUser && looksLikeSendControl(node)
+        }
         if (composers.size != 1) {
-            throw BridgeException(
-                "NOT_CHAT_SURFACE",
-                "The target window does not expose one unambiguous bottom message composer",
+            return ChatSurfaceAnalysis(
+                composerCandidates = composers,
+                sendControlCandidates = sendControlCandidates,
+                adjacentSendControls = emptyList(),
+                composerHasMessageSignal = false,
+                composerHasImeSendAction = false,
+                hasConversationContext = false,
+                imeActionId = null,
+                failureStage = if (composers.isEmpty()) {
+                    SurfaceFailureStage.COMPOSER_MISSING
+                } else {
+                    SurfaceFailureStage.COMPOSER_AMBIGUOUS
+                },
             )
         }
         val composer = composers.single()
         val composerBounds = nodeBounds(composer)
 
-        val adjacentSendControls = nodes.filter { node ->
-            node !== composer && node.isVisibleToUser && looksLikeSendControl(node) &&
+        val adjacentSendControls = sendControlCandidates.filter { node ->
+            node !== composer &&
                 isSpatiallyAdjacent(composerBounds, nodeBounds(node), effectiveWidth)
-        }
-        if (adjacentSendControls.size > 1) {
-            throw BridgeException(
-                "NOT_CHAT_SURFACE",
-                "The target window exposes multiple adjacent send controls",
-            )
         }
 
         val composerSignals = listOf(
@@ -456,12 +581,6 @@ class RosyTalkAccessibilityService : AccessibilityService() {
             null
         }
         val exposedImeSend = imeActionId?.takeIf { id -> composer.actionList.any { it.id == id } }
-        if (adjacentSendControls.isEmpty() && (!composerIsMessageLike || exposedImeSend == null)) {
-            throw BridgeException(
-                "NOT_CHAT_SURFACE",
-                "The target window lacks an adjacent Send control or explicit message-composer IME action",
-            )
-        }
 
         val hasConversationContext = nodes.any { node ->
             if (node === composer || node.isEditable || looksLikeSendControl(node)) return@any false
@@ -470,17 +589,25 @@ class RosyTalkAccessibilityService : AccessibilityService() {
             val bounds = nodeBounds(node)
             text.isNotBlank() && bounds.bottom <= composerBounds.top
         }
-        if (!hasConversationContext) {
-            throw BridgeException(
-                "NOT_CHAT_SURFACE",
-                "No visible conversation context appears above the message composer",
-            )
+        val failureStage = when {
+            adjacentSendControls.size > 1 -> SurfaceFailureStage.SEND_CONTROL_AMBIGUOUS
+            adjacentSendControls.isEmpty() && !composerIsMessageLike ->
+                SurfaceFailureStage.MESSAGE_COMPOSER_SIGNAL_MISSING
+            adjacentSendControls.isEmpty() && exposedImeSend == null ->
+                SurfaceFailureStage.IME_SEND_ACTION_MISSING
+            !hasConversationContext -> SurfaceFailureStage.CONVERSATION_CONTEXT_MISSING
+            else -> SurfaceFailureStage.READY
         }
 
-        return ChatSurface(
-            composer = composer,
-            sendControl = adjacentSendControls.singleOrNull(),
+        return ChatSurfaceAnalysis(
+            composerCandidates = composers,
+            sendControlCandidates = sendControlCandidates,
+            adjacentSendControls = adjacentSendControls,
+            composerHasMessageSignal = composerIsMessageLike,
+            composerHasImeSendAction = exposedImeSend != null,
+            hasConversationContext = hasConversationContext,
             imeActionId = if (adjacentSendControls.isEmpty()) exposedImeSend else null,
+            failureStage = failureStage,
         )
     }
 
@@ -632,6 +759,57 @@ class RosyTalkAccessibilityService : AccessibilityService() {
     private fun nodeBounds(node: AccessibilityNodeInfo): Rect =
         Rect().also { node.getBoundsInScreen(it) }
 
+    private fun Rect.toScreenBounds(): ScreenBounds = ScreenBounds(left, top, right, bottom)
+
+    private fun targetWindowBounds(root: AccessibilityNodeInfo): ScreenBounds? {
+        val window = root.window ?: return null
+        return try {
+            Rect().also(window::getBoundsInScreen).toScreenBounds()
+        } finally {
+            recycleWindow(window)
+        }
+    }
+
+    @Suppress("DEPRECATION")
+    private fun recycleWindow(window: AccessibilityWindowInfo) {
+        if (Build.VERSION.SDK_INT < 33) window.recycle()
+    }
+
+    private fun diagnosticMetadata(node: AccessibilityNodeInfo): SurfaceControlMetadata {
+        val actionIds = node.actionList.map { action -> action.id }.distinct().sorted()
+        return SurfaceControlMetadata(
+            className = node.className?.toString()?.take(MAX_DIAGNOSTIC_METADATA_CHARACTERS),
+            viewId = node.viewIdResourceName?.take(MAX_DIAGNOSTIC_METADATA_CHARACTERS),
+            bounds = nodeBounds(node).toScreenBounds(),
+            enabled = node.isEnabled,
+            supportedActionIds = actionIds.take(MAX_DIAGNOSTIC_ACTIONS),
+            supportedActionsTruncated = actionIds.size > MAX_DIAGNOSTIC_ACTIONS,
+        )
+    }
+
+    private fun emptySurfaceDiagnostic(failureStage: SurfaceFailureStage): SurfaceDiagnostic =
+        SurfaceDiagnostic(
+            targetConfigured = failureStage != SurfaceFailureStage.TARGET_NOT_CONFIGURED,
+            targetForeground = false,
+            rootBounds = null,
+            windowBounds = null,
+            observedNodeCount = 0,
+            nodeTraversalTruncated = false,
+            composerCandidateCount = 0,
+            sendControlCandidateCount = 0,
+            composerCandidates = emptyList(),
+            sendControlCandidates = emptyList(),
+            composerCandidatesTruncated = false,
+            sendControlCandidatesTruncated = false,
+            singleComposerCandidate = false,
+            adjacentSendControlCount = 0,
+            composerHasAdjacentSendControl = false,
+            composerHasMessageSignal = false,
+            composerHasImeSendAction = false,
+            conversationContextAboveComposer = false,
+            failureStage = failureStage,
+        )
+
     private fun stableLocalId(candidate: TextCandidate, order: Int): String {
         val source = "$order\u0000${candidate.text}\u0000${candidate.bounds.flattenToString()}"
         return UUID.nameUUIDFromBytes(source.toByteArray(StandardCharsets.UTF_8)).toString()
@@ -649,6 +827,17 @@ class RosyTalkAccessibilityService : AccessibilityService() {
         val composer: AccessibilityNodeInfo,
         val sendControl: AccessibilityNodeInfo?,
         val imeActionId: Int?,
+    )
+
+    private data class ChatSurfaceAnalysis(
+        val composerCandidates: List<AccessibilityNodeInfo>,
+        val sendControlCandidates: List<AccessibilityNodeInfo>,
+        val adjacentSendControls: List<AccessibilityNodeInfo>,
+        val composerHasMessageSignal: Boolean,
+        val composerHasImeSendAction: Boolean,
+        val hasConversationContext: Boolean,
+        val imeActionId: Int?,
+        val failureStage: SurfaceFailureStage,
     )
 
     private data class ControlIdentity(
@@ -685,6 +874,9 @@ class RosyTalkAccessibilityService : AccessibilityService() {
         private const val MAX_TREE_NODES = 2_000
         private const val MAX_TREE_DEPTH = 50
         private const val MAX_CHILDREN_PER_NODE = 200
+        private const val MAX_DIAGNOSTIC_CANDIDATES = 12
+        private const val MAX_DIAGNOSTIC_ACTIONS = 32
+        private const val MAX_DIAGNOSTIC_METADATA_CHARACTERS = 160
         private const val MIN_CONTROL_ALLOWANCE_PX = 48
         private const val MIN_COMPOSER_WIDTH_RATIO = 0.15
         private const val MAX_SEND_GAP_RATIO = 0.25

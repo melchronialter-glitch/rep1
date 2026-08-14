@@ -9,6 +9,7 @@ import {
   expressionStateSchema,
   roomExpressionResultSchema,
   submitResultSchema,
+  surfaceDiagnosticSchema,
 } from "./protocol.js";
 import { PhoneBroker, RosyTalkBridgeError } from "./phone-broker.js";
 import type { LineageStore } from "./lineage.js";
@@ -54,10 +55,10 @@ export function createRosyTalkMcpServer(
   lineage: LineageStore,
 ): McpServer {
   const server = new McpServer(
-    { name: "aster-android-rosytalk", version: "0.3.0" },
+    { name: "aster-android-rosytalk", version: "0.4.0" },
     {
       instructions:
-        "Access only the exact Android app selected in the phone bridge. A snapshot contains only text visible in the current target window and is never a complete conversation history. Preserve every item's sender and senderBasis fields: screen_geometry is an inference, and unknown must remain unknown. Never attribute text to a person more confidently than the source data permits. Preserve lineage.eventId and parentEventId when comparing observations. Message submission is allowed only while the phone's per-session switch is enabled and must cite both expected_revision and expected_snapshot_id. A successful submit result means the UI action was performed; deliveryConfirmed is always false and must not be described as delivery. A room expression is an explicit state authored through rosytalk_set_expression; never infer an expression from message text, sentiment, or behavior. The durable lineage is metadata-only and is not a transcript.",
+        "Access only the exact Android app selected in the phone bridge. A snapshot contains only text visible in the current target window and is never a complete conversation history. Preserve every item's sender and senderBasis fields: screen_geometry is an inference, and unknown must remain unknown. Never attribute text to a person more confidently than the source data permits. Preserve lineage.eventId and parentEventId when comparing observations. rosytalk_diagnose_surface is metadata-only: do not use it to request, infer, or reconstruct UI content. Message submission is allowed only while the phone's per-session switch is enabled and must cite both expected_revision and expected_snapshot_id. A successful submit result means the UI action was performed; deliveryConfirmed is always false and must not be described as delivery. A room expression is an explicit state authored through rosytalk_set_expression; never infer an expression from message text, sentiment, or behavior. The durable lineage is metadata-only and is not a transcript.",
     },
   );
 
@@ -121,6 +122,28 @@ export function createRosyTalkMcpServer(
       annotations: readOnlyAnnotations,
     },
     async () => textAndStructured(broker.roomStatus()),
+  );
+
+  server.registerTool(
+    "rosytalk_diagnose_surface",
+    {
+      title: "Diagnose the visible RosyTalk surface",
+      description:
+        "Inspect bounded structural metadata for the exact configured foreground app to explain which safe chat-surface recognition gate passed or failed. Returns counts, geometry, class/view IDs, action IDs, and booleans only—never node text, hints, content descriptions, window titles, drafts, conversation identifiers, or content-derived hashes.",
+      inputSchema: z.object({}).strict(),
+      outputSchema: surfaceDiagnosticSchema,
+      annotations: readOnlyAnnotations,
+    },
+    async () => {
+      try {
+        const diagnostic = surfaceDiagnosticSchema.parse(
+          await broker.request("surface.diagnose", {}),
+        );
+        return textAndStructured(diagnostic);
+      } catch (error) {
+        return toolError(error);
+      }
+    },
   );
 
   server.registerTool(

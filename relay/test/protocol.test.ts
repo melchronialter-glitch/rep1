@@ -8,10 +8,12 @@ import {
   MAX_VISIBLE_ITEMS,
   chatSnapshotSchema,
   chatUpdatedEventSchema,
+  helloAcceptedEventSchema,
   phoneHelloSchema,
   relayRequestSchema,
   roomExpressionResultSchema,
   submitResultSchema,
+  surfaceDiagnosticSchema,
 } from "../src/protocol.js";
 
 const item = {
@@ -45,7 +47,124 @@ const snapshot = {
   },
 };
 
+const surfaceControl = {
+  className: "android.widget.EditText",
+  viewId: "app.rosytalk:id/message_composer",
+  bounds: { left: 20, top: 900, right: 760, bottom: 1010 },
+  enabled: true,
+  supportedActionIds: [2_097_152],
+  supportedActionsTruncated: false,
+};
+
+const surfaceDiagnostic = {
+  scope: "foreground_target_metadata_only" as const,
+  targetConfigured: true,
+  targetForeground: true,
+  rootBounds: { left: 0, top: 0, right: 1080, bottom: 1920 },
+  windowBounds: { left: 0, top: 0, right: 1080, bottom: 1920 },
+  observedNodeCount: 24,
+  nodeTraversalTruncated: false,
+  composerCandidateCount: 1,
+  sendControlCandidateCount: 1,
+  composerCandidates: [surfaceControl],
+  sendControlCandidates: [
+    {
+      ...surfaceControl,
+      className: "android.widget.ImageButton",
+      viewId: "app.rosytalk:id/send_button",
+      bounds: { left: 780, top: 900, right: 1060, bottom: 1010 },
+      supportedActionIds: [16],
+    },
+  ],
+  composerCandidatesTruncated: false,
+  sendControlCandidatesTruncated: false,
+  singleComposerCandidate: true,
+  adjacentSendControlCount: 1,
+  composerHasAdjacentSendControl: true,
+  composerHasMessageSignal: true,
+  composerHasImeSendAction: false,
+  conversationContextAboveComposer: true,
+  failureStage: "ready" as const,
+};
+
 describe("RosyTalk phone protocol", () => {
+  test("makes relay acceptance of the phone hello explicit", () => {
+    assert.equal(
+      helloAcceptedEventSchema.safeParse({
+        type: "event",
+        event: "hello.accepted",
+        protocolVersion: 2,
+      }).success,
+      true,
+    );
+    assert.equal(
+      helloAcceptedEventSchema.safeParse({
+        type: "event",
+        event: "hello.accepted",
+        protocolVersion: 1,
+      }).success,
+      false,
+    );
+  });
+
+  test("keeps surface diagnostics structurally metadata-only", () => {
+    assert.equal(surfaceDiagnosticSchema.safeParse(surfaceDiagnostic).success, true);
+    const forbiddenTopLevelKeys = [
+      "text",
+      "hintText",
+      "contentDescription",
+      "windowTitle",
+      "composerDraft",
+      "conversationHash",
+    ];
+    for (const key of forbiddenTopLevelKeys) {
+      assert.equal(
+        surfaceDiagnosticSchema.safeParse({
+          ...surfaceDiagnostic,
+          [key]: "SENTINEL_SECRET_DO_NOT_EXPORT",
+        }).success,
+        false,
+      );
+    }
+    for (const key of ["text", "hintText", "contentDescription", "draft", "hash"]) {
+      assert.equal(
+        surfaceDiagnosticSchema.safeParse({
+          ...surfaceDiagnostic,
+          composerCandidates: [
+            { ...surfaceControl, [key]: "SENTINEL_SECRET_DO_NOT_EXPORT" },
+          ],
+        }).success,
+        false,
+      );
+    }
+    assert.equal(
+      surfaceDiagnosticSchema.safeParse({
+        ...surfaceDiagnostic,
+        rootBounds: {
+          ...surfaceDiagnostic.rootBounds,
+          text: "SENTINEL_SECRET_DO_NOT_EXPORT",
+        },
+      }).success,
+      false,
+    );
+  });
+
+  test("accepts only an empty surface diagnostic request", () => {
+    const request = {
+      type: "request",
+      id: randomUUID(),
+      method: "surface.diagnose",
+    } as const;
+    assert.equal(
+      relayRequestSchema.safeParse({ ...request, params: {} }).success,
+      true,
+    );
+    assert.equal(
+      relayRequestSchema.safeParse({ ...request, params: { includeText: true } }).success,
+      false,
+    );
+  });
+
   test("makes target scope and snapshot incompleteness explicit", () => {
     assert.equal(chatSnapshotSchema.safeParse(snapshot).success, true);
     assert.equal(

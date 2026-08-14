@@ -10,7 +10,9 @@ import android.graphics.drawable.GradientDrawable
 import android.os.Build
 import android.os.Bundle
 import android.provider.Settings
+import android.text.Editable
 import android.text.InputType
+import android.text.TextWatcher
 import android.text.method.PasswordTransformationMethod
 import android.text.method.ScrollingMovementMethod
 import android.view.Gravity
@@ -33,12 +35,14 @@ import java.util.Locale
 
 class MainActivity : Activity(), BridgeListener {
     private lateinit var relayUrlInput: EditText
+    private lateinit var relayGuidanceText: TextView
     private lateinit var tokenInput: EditText
     private lateinit var targetSpinner: Spinner
     private lateinit var accessibilityText: TextView
     private lateinit var submissionsSwitch: Switch
     private lateinit var connectButton: Button
     private lateinit var disconnectButton: Button
+    private lateinit var testRelayButton: Button
     private lateinit var statusText: TextView
     private lateinit var logText: TextView
     private lateinit var asterFaceView: AsterFaceView
@@ -50,12 +54,22 @@ class MainActivity : Activity(), BridgeListener {
     private lateinit var directPathText: TextView
     private lateinit var openRosyTalkButton: Button
     private lateinit var secureTokenStore: SecureTokenStore
+    private val relayHealthProbe = RelayHealthProbe()
     private lateinit var appChoices: List<AppChoice>
     private val logLines = ArrayDeque<String>()
     private val timestampFormat = SimpleDateFormat("HH:mm:ss", Locale.getDefault())
     private var restoringSpinner = true
     private var suppressSubmissionListener = false
     private var suppressExpressionListener = false
+    private var healthProbeActive = false
+    private var relayDiagnosticMessage: String? = null
+    private var relayDiagnosticFailed = false
+    private var lastActivitySequence = 0L
+    private var sessionStartLogged = false
+    private val debugBuild: Boolean by lazy {
+        applicationInfo.flags and ApplicationInfo.FLAG_DEBUGGABLE != 0
+    }
+    private val emulatorDevice: Boolean by lazy { isProbablyEmulator() }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -76,12 +90,15 @@ class MainActivity : Activity(), BridgeListener {
         renderExpression(BridgeRuntime.currentRoomExpression)
         BridgeRuntime.latestSnapshot?.let(::renderSnapshot)
         refreshDirectPathDisplay()
-        appendLog("Session started; Aster actions are off")
     }
 
     override fun onStart() {
         super.onStart()
         BridgeRuntime.attach(this)
+        if (!sessionStartLogged) {
+            sessionStartLogged = true
+            appendLog("Session started; Aster actions are off")
+        }
     }
 
     override fun onResume() {
@@ -97,6 +114,11 @@ class MainActivity : Activity(), BridgeListener {
         super.onStop()
     }
 
+    override fun onDestroy() {
+        relayHealthProbe.cancel()
+        super.onDestroy()
+    }
+
     override fun onConnectionState(state: ConnectionState, detail: String) {
         runOnUiThread {
             statusText.text = detail
@@ -110,6 +132,16 @@ class MainActivity : Activity(), BridgeListener {
             reflectSubmissionAuthorization()
             refreshDirectPathDisplay()
             appendLog(message)
+        }
+    }
+
+    override fun onActivityEvent(event: BridgeActivityEvent) {
+        runOnUiThread {
+            if (event.sequence <= lastActivitySequence) return@runOnUiThread
+            lastActivitySequence = event.sequence
+            reflectSubmissionAuthorization()
+            refreshDirectPathDisplay()
+            appendLog(event.message, event.recordedAtEpochMs)
         }
     }
 
@@ -241,6 +273,8 @@ class MainActivity : Activity(), BridgeListener {
             importantForAutofill = View.IMPORTANT_FOR_AUTOFILL_NO_EXCLUDE_DESCENDANTS
         }
         content.addView(relayUrlInput, matchWrap())
+        relayGuidanceText = body("", 13f)
+        content.addView(relayGuidanceText, matchWrap().apply { topMargin = 6.dp })
 
         content.addView(label("Phone token").withTopMargin(14.dp))
         tokenInput = EditText(this).apply {
@@ -255,6 +289,15 @@ class MainActivity : Activity(), BridgeListener {
         content.addView(
             body("The saved token is AES/GCM ciphertext backed by Android Keystore.", 13f)
                 .withBottomMargin(14.dp),
+        )
+
+        testRelayButton = Button(this).apply { text = "Test relay reachability" }
+        content.addView(testRelayButton, matchWrap())
+        content.addView(
+            body(
+                "The reachability test sends no phone token and accepts only a bounded /healthz response with ok=true.",
+                12f,
+            ).withBottomMargin(8.dp),
         )
 
         val connectionButtons = LinearLayout(this).apply {
@@ -326,10 +369,10 @@ class MainActivity : Activity(), BridgeListener {
         targetSpinner.setSelection(if (savedIndex >= 0) savedIndex else 0, false)
         restoringSpinner = false
 
-        val debugBuild = applicationInfo.flags and ApplicationInfo.FLAG_DEBUGGABLE != 0
-        val defaultUrl = if (debugBuild) "ws://10.0.2.2:8787/phone" else ""
+        val defaultUrl = RelayEndpoint.freshInstallDefault(debugBuild, emulatorDevice)
         relayUrlInput.setText(BridgePreferences.relayUrl(this, defaultUrl))
         tokenInput.setText(secureTokenStore.loadToken().orEmpty())
+        refreshRelayGuidance()
 
         val expressionAdapter = ArrayAdapter(
             this,
@@ -360,6 +403,21 @@ class MainActivity : Activity(), BridgeListener {
         }
         connectButton.setOnClickListener { connectFromUi() }
         disconnectButton.setOnClickListener { BridgeRuntime.disconnect("Disconnected by user") }
+        testRelayButton.setOnClickListener { testRelayFromUi() }
+        relayUrlInput.addTextChangedListener(object : TextWatcher {
+            override fun beforeTextChanged(text: CharSequence?, start: Int, count: Int, after: Int) = Unit
+            override fun onTextChanged(text: CharSequence?, start: Int, before: Int, count: Int) {
+                if (healthProbeActive) {
+                    relayHealthProbe.cancel()
+                    healthProbeActive = false
+                    updateConnectionControls(BridgeRuntime.state)
+                }
+                relayDiagnosticMessage = null
+                relayDiagnosticFailed = false
+                refreshRelayGuidance()
+            }
+            override fun afterTextChanged(text: Editable?) = Unit
+        })
         submissionsSwitch.setOnCheckedChangeListener { _, enabled ->
             if (!suppressSubmissionListener) BridgeRuntime.setSubmissionsEnabled(enabled)
         }
@@ -394,6 +452,7 @@ class MainActivity : Activity(), BridgeListener {
             showInputError("Enter the relay WebSocket URL")
             return
         }
+        val endpoint = parseRelayEndpoint(url) ?: return
         if (token.isBlank()) {
             showInputError("Enter the phone token")
             return
@@ -404,12 +463,67 @@ class MainActivity : Activity(), BridgeListener {
         }
         BridgePreferences.saveRelayUrl(this, url)
         try {
-            BridgeRuntime.connect(url, token)
+            BridgeRuntime.connect(endpoint.webSocketUrl, token)
         } catch (error: IllegalArgumentException) {
             showInputError(error.message ?: "Relay settings are invalid")
         } catch (_: IllegalStateException) {
             showInputError("The connection client is unavailable")
         }
+    }
+
+    private fun testRelayFromUi() {
+        val rawUrl = relayUrlInput.text.toString().trim()
+        if (rawUrl.isBlank()) {
+            showInputError("Enter the relay WebSocket URL")
+            return
+        }
+        val endpoint = parseRelayEndpoint(rawUrl) ?: return
+        healthProbeActive = true
+        relayDiagnosticFailed = false
+        relayDiagnosticMessage = "Testing the token-free health path at ${endpoint.displayEndpoint}…"
+        refreshRelayGuidance()
+        updateConnectionControls(BridgeRuntime.state)
+        BridgeRuntime.recordActivity("Testing relay reachability at ${endpoint.displayEndpoint}")
+        relayHealthProbe.probe(endpoint) { result ->
+            BridgeRuntime.recordActivity(result.message)
+            runOnUiThread {
+                if (isDestroyed) return@runOnUiThread
+                healthProbeActive = false
+                relayDiagnosticFailed = !result.healthy
+                relayDiagnosticMessage = result.message
+                refreshRelayGuidance()
+                updateConnectionControls(BridgeRuntime.state)
+            }
+        }
+    }
+
+    private fun parseRelayEndpoint(rawUrl: String): RelayEndpoint? = try {
+        RelayEndpoint.parse(rawUrl, debugBuild, emulatorDevice)
+    } catch (error: IllegalArgumentException) {
+        relayDiagnosticFailed = true
+        relayDiagnosticMessage = error.message ?: "Relay settings are invalid"
+        refreshRelayGuidance()
+        showInputError(error.message ?: "Relay settings are invalid")
+        null
+    }
+
+    private fun refreshRelayGuidance() {
+        if (!::relayGuidanceText.isInitialized) return
+        val impossibleHost = RelayEndpoint.impossibleHostMessage(
+            relayUrlInput.text?.toString().orEmpty(),
+            emulatorDevice,
+        )
+        val guidance = RelayEndpoint.guidance(debugBuild, emulatorDevice)
+        relayGuidanceText.text = listOfNotNull(impossibleHost, relayDiagnosticMessage, guidance)
+            .distinct()
+            .joinToString("\n\n")
+        relayGuidanceText.setTextColor(
+            if (impossibleHost != null || relayDiagnosticFailed) {
+                Color.rgb(154, 30, 30)
+            } else {
+                Color.rgb(55, 70, 100)
+            },
+        )
     }
 
     private fun persistSettings() {
@@ -566,6 +680,7 @@ class MainActivity : Activity(), BridgeListener {
     private fun updateConnectionControls(state: ConnectionState) {
         connectButton.isEnabled = state != ConnectionState.CONNECTING
         disconnectButton.isEnabled = state != ConnectionState.DISCONNECTED
+        testRelayButton.isEnabled = state != ConnectionState.CONNECTING && !healthProbeActive
     }
 
     private fun reflectSubmissionAuthorization() {
@@ -577,9 +692,9 @@ class MainActivity : Activity(), BridgeListener {
         suppressSubmissionListener = false
     }
 
-    private fun appendLog(message: String) {
+    private fun appendLog(message: String, recordedAtEpochMs: Long = System.currentTimeMillis()) {
         if (!::logText.isInitialized) return
-        val timestamp = timestampFormat.format(Date())
+        val timestamp = timestampFormat.format(Date(recordedAtEpochMs))
         logLines.addLast("$timestamp  ${message.take(180)}")
         while (logLines.size > MAX_LOG_LINES) logLines.removeFirst()
         logText.text = logLines.joinToString("\n")

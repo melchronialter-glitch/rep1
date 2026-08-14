@@ -16,6 +16,7 @@ enum class ConnectionState {
 interface BridgeListener {
     fun onConnectionState(state: ConnectionState, detail: String)
     fun onActivity(message: String)
+    fun onActivityEvent(event: BridgeActivityEvent) = onActivity(event.message)
     fun onSnapshot(snapshot: ConversationSnapshot) = Unit
     fun onSnapshotCleared() = Unit
     fun onRoomExpression(state: AsterRoomExpressionState) = Unit
@@ -25,6 +26,9 @@ interface BridgeListener {
  * accessibility service after the setup Activity leaves the foreground. */
 object BridgeRuntime : BridgeListener {
     private val mainHandler = Handler(Looper.getMainLooper())
+    private val activityLock = Any()
+    private val activityRing = ArrayDeque<BridgeActivityEvent>()
+    private var nextActivitySequence = 1L
     private val submissionExpiryRunnable = object : Runnable {
         override fun run() {
             val remaining = submissionExpiresAtElapsedMs - SystemClock.elapsedRealtime()
@@ -76,6 +80,8 @@ object BridgeRuntime : BridgeListener {
         }
         mirroredSnapshot?.let(listener::onSnapshot)
         listener.onRoomExpression(expressionState)
+        val recentActivity = synchronized(activityLock) { activityRing.toList() }
+        recentActivity.forEach(listener::onActivityEvent)
     }
 
     fun detach(listener: BridgeListener) {
@@ -206,8 +212,21 @@ object BridgeRuntime : BridgeListener {
     }
 
     override fun onActivity(message: String) {
-        uiListener?.onActivity(message)
+        val event = synchronized(activityLock) {
+            val next = BridgeActivityEvent(
+                sequence = nextActivitySequence,
+                recordedAtEpochMs = System.currentTimeMillis(),
+                message = BridgeActivitySanitizer.sanitize(message),
+            )
+            nextActivitySequence = if (nextActivitySequence == Long.MAX_VALUE) 1L else nextActivitySequence + 1L
+            activityRing.addLast(next)
+            while (activityRing.size > MAX_ACTIVITY_EVENTS) activityRing.removeFirst()
+            next
+        }
+        dispatchActivity(event)
     }
+
+    fun recordActivity(message: String) = onActivity(message)
 
     private fun disableSubmissions(message: String) {
         val wasEnabled = submissionsEnabled || submissionExpiresAtElapsedMs != 0L
@@ -216,5 +235,15 @@ object BridgeRuntime : BridgeListener {
         if (wasEnabled) onActivity(message)
     }
 
+    private fun dispatchActivity(event: BridgeActivityEvent) {
+        val deliver = { uiListener?.onActivityEvent(event) }
+        if (Looper.myLooper() == Looper.getMainLooper()) {
+            deliver()
+        } else {
+            mainHandler.post(deliver)
+        }
+    }
+
     private const val SUBMISSION_AUTHORIZATION_MS = 15L * 60L * 1000L
+    private const val MAX_ACTIVITY_EVENTS = 64
 }

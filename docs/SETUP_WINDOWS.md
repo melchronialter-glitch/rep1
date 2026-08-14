@@ -6,7 +6,8 @@ This setup connects one Android phone to a relay on a Windows laptop. It does no
 
 - Windows 10 or 11.
 - Node.js 20 or newer, including `npm`.
-- Internet access on the laptop the first time `npm ci` installs the locked relay dependencies.
+- Internet access on the laptop when `npm ci` cannot satisfy the locked relay dependencies from
+  the local npm cache.
 - The Aster RosyTalk Bridge debug APK for trusted-LAN `ws://` testing, or a release APK plus a configured `wss://` endpoint.
 - An Android phone and laptop on the same trusted private Wi-Fi for local `ws://` testing, or an Android emulator using `ws://10.0.2.2:8787/phone`.
 - The RosyTalk application already installed on the phone.
@@ -28,8 +29,14 @@ The launcher:
 3. asks for explicit confirmation if Windows does not report the network as Private;
 4. generates separate 256-bit `PHONE_TOKEN` and `MCP_TOKEN` values on first run;
 5. stores them in the local `.env` file;
-6. installs locked npm dependencies and compiles the relay; and
-7. starts the relay after a local health check.
+6. runs a fresh locked `npm ci --ignore-scripts` and compiles the relay, preventing an older
+   `node_modules` tree from surviving a source update; and
+7. starts the relay after probing `/healthz` through both loopback and the selected LAN address on
+   the laptop.
+
+Those laptop-side probes verify the listener and selected address, not the physical phone's route.
+Open the printed LAN `/healthz` URL in the phone browser before configuring Aster Room; that
+separate check can reveal Wi-Fi client isolation or Windows Firewall blocking.
 
 `.env` is a local plaintext secret file. Keep the Windows account and project folder private, never include `.env` in an archive, and do not send it for troubleshooting. The supplied bundle builder excludes it.
 
@@ -122,4 +129,4 @@ Sender role may be inferred from layout. Group chats, quoted messages, right-to-
 
 ### Relay works, but ChatGPT cannot see tools
 
-The local relay and ChatGPT connection are separate phases. Follow [Connect ChatGPT](CONNECT_CHATGPT.md), keep `tunnel-client` running, and use its `doctor --explain` diagnostics.
+The local relay and ChatGPT connection are separate phases. Follow [Connect ChatGPT](CONNECT_CHATGPT.md), keep the tunnel helper's `tunnel-client run` process alive, and restart the helper to rerun its ephemeral `doctor --explain` diagnostics. The tunnel-client's loopback `/healthz`, `/readyz`, and `/ui` surfaces are separate from the relay endpoint on port 8787.

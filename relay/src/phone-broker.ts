@@ -15,6 +15,7 @@ import {
   type RoomExpressionInput,
   type RoomExpressionResult,
   chatUpdatedEventSchema,
+  helloAcceptedEventSchema,
   parseResult,
   phoneHelloSchema,
   phoneResponseSchema,
@@ -507,6 +508,16 @@ export class PhoneBroker {
       }
       this.hello = hello.data;
       if (this.helloTimer) clearTimeout(this.helloTimer);
+      const accepted = helloAcceptedEventSchema.parse({
+        type: "event",
+        event: "hello.accepted",
+        protocolVersion: hello.data.protocolVersion,
+      });
+      socket.send(JSON.stringify(accepted), (error) => {
+        if (!error || socket !== this.socket) return;
+        audit({ event: "chat.error", code: "HELLO_ACK_SEND_FAILED" });
+        socket.close(1011, "Hello acknowledgement could not be sent");
+      });
       audit({ event: "phone.connected", deviceId: hello.data.device.id });
       return;
     }
@@ -612,7 +623,7 @@ export class PhoneBroker {
           method: submit.method,
           status: "local_ui_action_only",
         }, true);
-      } else {
+      } else if (pending.method === "room.expression") {
         const expression = result as RoomExpressionResult;
         const expected = pending.expectedExpression;
         if (

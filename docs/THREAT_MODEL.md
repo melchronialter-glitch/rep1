@@ -67,7 +67,14 @@ The bridge does **not** trust text read from RosyTalk as instructions. That text
 - No MCP method deletes or edits existing messages, selects contacts, opens attachments, navigates conversations, or uploads files. The only write path is set-text followed by one bounded submit action in the already visible window.
 - The result reports UI submission separately from delivery confirmation.
 - The phone initiates the WebSocket; it does not open an inbound phone port.
+- A WebSocket open is not treated as readiness. Android remains in `CONNECTING` until the relay
+  explicitly acknowledges the validated protocol-v2 hello, and fails closed on pre-ack data or
+  acknowledgement timeout.
 - The phone bearer is stored with Android Keystore protection. The relay hello uses a random per-install identifier rather than Android's stable hardware-scoped ID. On-device status logging excludes bearer values and message text.
+- The surface diagnostic traverses no non-target window and serializes only bounded geometry,
+  class/view IDs, accessibility action IDs, counts, booleans, and a failure stage. Its strict relay
+  schema rejects node text, hints, descriptions, titles, drafts, conversation identifiers, and
+  content-derived hashes.
 - Release deployments should use `wss://`. Any debug `ws://` allowance is for a controlled local network only.
 
 ### Relay and protocol
@@ -79,8 +86,8 @@ The bridge does **not** trust text read from RosyTalk as instructions. That text
 - The relay retains the latest bounded snapshot/update and acknowledged Room expression in memory and separately appends metadata-only observation/action ancestry to `.aster-runtime/rosytalk-lineage.jsonl`.
 - A submit-request record must be durably written before dispatch. A post-dispatch outcome-write failure remains indeterminate, blocks later submissions, and closes the phone connection so Android clears its temporary authorization.
 - A timed-out or malformed submit response is also treated as indeterminate and closes the phone connection; it is never relabeled as a proven failure or success.
-- v0.3 assumes one relay writer per lineage file and loads the active journal into memory. It never silently truncates provenance; stop the relay and externally checkpoint the journal/head before starting a new file when growth requires rotation.
-- Seven MCP tools are registered with distinct read/write annotations: five baseline chat/lineage tools and two Room tools. Submission is destructive/open-world; an expression write is state-changing but not falsely described as message delivery.
+- v0.4 assumes one relay writer per lineage file and loads the active journal into memory. It never silently truncates provenance; stop the relay and externally checkpoint the journal/head before starting a new file when growth requires rotation.
+- Eight MCP tools are registered with distinct read/write annotations: five baseline chat/lineage tools, one metadata-only surface diagnostic, and two Room tools. Submission is destructive/open-world; an expression write is state-changing but not falsely described as message delivery.
 - An expression-request record is durably written before dispatch. The acknowledgement must match the exact authored state, caption, and request ancestry. Timeout, malformed/mismatched acknowledgement, or post-dispatch lineage failure is indeterminate and closes the phone connection.
 - Expression captions are deliberately excluded from durable lineage; records retain only event class, ancestry, method, status, and failure code.
 - The relay defaults to a private binding. The Windows LAN launcher binds the shared relay listener to a user-confirmed trusted local network so the phone can reach `/phone`; `/phone` still requires `PHONE_TOKEN`, and the same LAN listener's `/mcp` path remains protected by `MCP_TOKEN`.

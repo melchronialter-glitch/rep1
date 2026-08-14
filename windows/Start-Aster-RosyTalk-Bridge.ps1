@@ -109,6 +109,7 @@ try {
 
     Write-Host "Aster RosyTalk Bridge - Windows launcher" -ForegroundColor Magenta
     Write-Host "The bridge is restricted to the selected Android package and current visible window."
+    Write-Host "This starts and tests the laptop side only; the physical phone must still pass its own browser and bridge connection checks."
 
     if (-not (Test-Path -LiteralPath (Join-Path $projectRoot "package.json") -PathType Leaf)) {
         throw "Keep the windows folder inside the extracted rosytalk-bridge project, beside package.json."
@@ -212,13 +213,8 @@ try {
     Write-Host "Saved .env. Existing valid tokens are reused unless -RotateTokens is supplied."
 
     Write-Step "Installing and compiling the relay"
-    if (-not (Test-Path -LiteralPath (Join-Path $projectRoot "node_modules\.package-lock.json") -PathType Leaf)) {
-        & $npmCommand.Source ci --ignore-scripts --no-audit --no-fund
-        if ($LASTEXITCODE -ne 0) { throw "npm ci failed with exit code $LASTEXITCODE." }
-    }
-    else {
-        Write-Host "Locked dependencies are already installed."
-    }
+    & $npmCommand.Source ci --ignore-scripts --no-audit --no-fund
+    if ($LASTEXITCODE -ne 0) { throw "npm ci failed with exit code $LASTEXITCODE." }
     & $npmCommand.Source run build
     if ($LASTEXITCODE -ne 0) { throw "The relay build failed with exit code $LASTEXITCODE." }
 
@@ -238,6 +234,8 @@ try {
 
     Write-Step "Starting the relay"
     Write-Host "If Windows Firewall asks, allow Node.js on PRIVATE networks only." -ForegroundColor Yellow
+    Write-Host "Startup will probe /healthz through both loopback and the selected LAN address $LanAddress."
+    Write-Host "A passing laptop LAN probe does not prove that the phone can cross Wi-Fi isolation or Windows Firewall."
     & $nodeCommand.Source $windowsHost
     if ($LASTEXITCODE -ne 0) { throw "The relay stopped with exit code $LASTEXITCODE." }
 }

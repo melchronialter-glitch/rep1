@@ -75,7 +75,7 @@ socket.on("open", () => {
       device: {
         id: "mock-phone",
         name: "Mock Android RosyTalk",
-        appVersion: "0.3.0",
+        appVersion: "0.4.0",
         androidVersion: "test",
       },
       capabilities: {
@@ -100,6 +100,51 @@ socket.on("message", (raw) => {
 
 function respond(request: RelayRequest): void {
   switch (request.method) {
+    case "surface.diagnose":
+      socket.send(
+        JSON.stringify({
+          type: "response",
+          id: request.id,
+          ok: true,
+          result: {
+            scope: "foreground_target_metadata_only",
+            targetConfigured: true,
+            targetForeground: true,
+            rootBounds: { left: 0, top: 0, right: 1080, bottom: 1920 },
+            windowBounds: { left: 0, top: 0, right: 1080, bottom: 1920 },
+            observedNodeCount: 24,
+            nodeTraversalTruncated: false,
+            composerCandidateCount: 1,
+            sendControlCandidateCount: 1,
+            composerCandidates: [{
+              className: "android.widget.EditText",
+              viewId: `${targetPackage}:id/message_composer`,
+              bounds: { left: 20, top: 900, right: 760, bottom: 1010 },
+              enabled: true,
+              supportedActionIds: [2_097_152],
+              supportedActionsTruncated: false,
+            }],
+            sendControlCandidates: [{
+              className: "android.widget.ImageButton",
+              viewId: `${targetPackage}:id/send_button`,
+              bounds: { left: 780, top: 900, right: 1060, bottom: 1010 },
+              enabled: true,
+              supportedActionIds: [16],
+              supportedActionsTruncated: false,
+            }],
+            composerCandidatesTruncated: false,
+            sendControlCandidatesTruncated: false,
+            singleComposerCandidate: true,
+            adjacentSendControlCount: 1,
+            composerHasAdjacentSendControl: true,
+            composerHasMessageSignal: true,
+            composerHasImeSendAction: false,
+            conversationContextAboveComposer: true,
+            failureStage: "ready",
+          },
+        }),
+      );
+      return;
     case "chat.snapshot":
       socket.send(
         JSON.stringify({

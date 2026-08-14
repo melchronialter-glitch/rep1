@@ -8,13 +8,15 @@ The tunnel protects the OpenAI-to-MCP path. It does not wrap the separate phone-
 
 ## What the connection exposes
 
-Version 0.3 exposes seven tools. Five operate the chat/lineage transport; two operate the local
-Aster Room face. Review every tool and annotation before enabling the connection.
+Version 0.4 exposes eight tools. Five operate the chat/lineage transport, one returns strictly
+metadata-only chat-surface diagnostics, and two operate the local Aster Room face. Review every
+tool and annotation before enabling the connection.
 
 | Tool | Effect |
 | --- | --- |
 | `rosytalk_status` | Reports phone, accessibility, target-package, and 15-minute action-arming state. |
 | `rosytalk_room_status` | Reports Room-expression support, whether the shared action arm is active, and the last explicitly authored expression acknowledged by this phone connection. |
+| `rosytalk_diagnose_surface` | Reports bounded target-window geometry, control metadata/action IDs, recognition booleans, and the exact failed gate. It never returns node text, hints, descriptions, titles, drafts, conversation identifiers, or content-derived hashes. |
 | `rosytalk_read_visible` | Reads a bounded snapshot of text currently visible after the selected RosyTalk window passes the phone's chat-surface checks. |
 | `rosytalk_wait_for_update` | Waits for a newer visible-window revision for a bounded time. It is not a permanent background listener. |
 | `rosytalk_read_lineage` | Reads bounded pages of metadata-only observation/action ancestry. It is not a message transcript. |
@@ -47,7 +49,7 @@ Confirm that `rosytalk_status` can eventually see a connected phone once the MCP
 
 ### 2. Create the tunnel manually
 
-Open [Platform tunnel settings](https://platform.openai.com/settings/organization/tunnels), create or select a tunnel, and associate it with the ChatGPT workspace that will use it. According to the official tunnel guide, creating or editing requires Tunnels **Read + Manage**; running `tunnel-client` or selecting the tunnel requires Tunnels **Read + Use**. ChatGPT developer-mode permission is separate.
+Open [Platform tunnel settings](https://platform.openai.com/settings/organization/tunnels), create or select a tunnel, and associate it with both the Platform organization that owns/manages it and the ChatGPT workspace that will use it. Add any other Platform organization that will call it from Codex or the API. According to the official tunnel guide, creating or editing requires Tunnels **Read + Manage**; running `tunnel-client` or selecting the tunnel requires Tunnels **Read + Use**. ChatGPT developer-mode permission is separate. A new role assignment can take up to 30 minutes to propagate.
 
 You need:
 
@@ -62,9 +64,10 @@ The supplied `windows\Start-Aster-RosyTalk-Tunnel.cmd` is a convenience launcher
 2. displays the executable's SHA-256 and requires either `-ExpectedSha256` or manual checksum confirmation before execution;
 3. reads the local `MCP_TOKEN` without printing it;
 4. prompts for the runtime API key without saving or echoing it;
-5. attempts to give `tunnel-client` an environment-backed `Authorization` header for local `/mcp` discovery and calls;
-6. runs `doctor --explain`; and
-7. starts the tunnel only if the diagnostic succeeds.
+5. runs `tunnel-client help quickstart` as a compatibility check;
+6. supplies the tunnel ID, local MCP URL, and separate discovery/call `Authorization` headers through supported process-local environment configuration;
+7. runs `doctor --explain`; and
+8. starts the tunnel only if the diagnostic succeeds.
 
 Run it from the extracted bridge folder:
 
@@ -80,29 +83,44 @@ For a non-interactive checksum decision, add the SHA-256 published for the exact
   -ExpectedSha256 "<64-character SHA-256 from the official download>"
 ```
 
-### Current official profile flow
+### Ephemeral environment configuration used by this repository
 
-The current official tunnel documentation uses a named profile. Treat this as the canonical
-shape and use the exact syntax reported by the installed binary:
+The supplied helper deliberately uses one-process environment configuration rather than writing a
+named local profile. It sets `CONTROL_PLANE_API_KEY`, `CONTROL_PLANE_TUNNEL_ID`, and
+`MCP_SERVER_URL` for the `tunnel-client` process. It also keeps the relay authenticated by setting
+both supported MCP header variables:
+
+```text
+MCP_EXTRA_HEADERS=Authorization: env:ASTER_ROSYTALK_MCP_AUTH
+MCP_DISCOVERY_EXTRA_HEADERS=Authorization: env:ASTER_ROSYTALK_MCP_AUTH
+ASTER_ROSYTALK_MCP_AUTH=Bearer <MCP_TOKEN>
+```
+
+The runtime API key and header value are not written to a tunnel-client profile and are removed
+from the helper's environment after `tunnel-client` exits. A successful `doctor --explain` is the
+commissioning gate for this exact configuration. If it fails, stop; do not set
+`MCP_ALLOW_UNAUTHENTICATED_LOCAL=true` and do not publish `/mcp`.
+
+After `run` starts, use the loopback admin URL printed by the installed client to inspect its
+`/healthz`, `/readyz`, and `/ui` surfaces. They belong to `tunnel-client`, not to the relay at port
+8787. Keep the admin listener loopback-only and require readiness/polling before ChatGPT discovery.
+
+### Optional named profile
+
+The official guide also documents a named profile. It is optional for this repository; use it only
+if you intentionally want persistent local tunnel configuration and have checked the exact syntax
+with `tunnel-client help quickstart`:
 
 ```text
 tunnel-client help quickstart
-tunnel-client init --profile aster-rosytalk --tunnel-id <tunnel_id> --mcp-server-url http://127.0.0.1:8787/mcp
+tunnel-client init --sample sample_mcp_remote_no_auth --profile aster-rosytalk --tunnel-id <tunnel_id> --mcp-server-url http://127.0.0.1:8787/mcp
 tunnel-client doctor --profile aster-rosytalk --explain
 tunnel-client run --profile aster-rosytalk
 ```
 
-Set `CONTROL_PLANE_API_KEY` for the tunnel-client process as directed by the official guide. Keep
-`run --profile aster-rosytalk` alive during discovery and every tool call.
-
-This relay also requires `Authorization: Bearer <MCP_TOKEN>` on both MCP discovery and tool calls.
-The public tunnel guide does not currently document a stable command-line spelling for custom
-MCP-side headers. Before relying on the supplied helper or creating the profile, inspect
-`tunnel-client help init` / `help quickstart` from the exact downloaded binary and verify that its
-profile sends that header. Then require `doctor --profile aster-rosytalk --explain` to succeed.
-That bearer-header handoff is an **external commissioning gate**: it cannot be certified by this
-source tree without the actual tunnel-client version. If the binary has no supported MCP-header
-configuration, stop; do not set `MCP_ALLOW_UNAUTHENTICATED_LOCAL=true` and do not publish `/mcp`.
+Keep `CONTROL_PLANE_API_KEY` and the three header environment variables above in the process that
+runs profile diagnostics and the profile. Store environment references rather than the bearer
+value in any persistent profile.
 
 ### 3. Add the developer-mode connection in ChatGPT
 
@@ -111,11 +129,11 @@ Follow OpenAI's current [connect and test guidance](https://developers.openai.co
 1. In ChatGPT, open **Settings → Security and login** and enable **Developer mode** if your plan and workspace policy allow it.
 2. Open [ChatGPT Plugins](https://chatgpt.com/plugins), select the plus button, and create a developer-mode connection.
 3. Choose **Tunnel** under Connection, then select the associated tunnel or enter its `tunnel_id`.
-4. Review all seven discovered tools and their read/write annotations, including both Aster Room tools.
+4. Review all eight discovered tools and their read/write annotations, including the metadata-only diagnostic and both Aster Room tools.
 5. Add the connection to a new conversation.
 6. Call `rosytalk_status`, then `rosytalk_read_visible` while the selected RosyTalk conversation is open on the phone.
 
-Keep the relay, Android connection, and `tunnel-client run --profile aster-rosytalk` alive for discovery and every tool call. If the tunnel is missing, verify workspace association and Tunnels **Read + Use**. If discovery or calls fail, run `tunnel-client doctor --profile aster-rosytalk --explain` again.
+Keep the relay, Android connection, and the helper's `tunnel-client run` process alive for discovery and every tool call. If the tunnel is missing, verify the Platform-organization and ChatGPT-workspace associations and Tunnels **Read + Use**. If discovery or calls fail, stop the helper and run it again so `doctor --explain` rechecks the same ephemeral configuration before `run` starts.
 
 Once discovery succeeds, use the ordered commissioning procedure in
 [Commission the first conversation](COMMISSION_FIRST_CONVERSATION.md).
@@ -152,11 +170,13 @@ Before relying on the connection, test all of these:
 1. Wrong phone token is rejected.
 2. Wrong MCP token is rejected.
 3. A different foreground app returns a target-not-active error and leaks no text.
-4. A visible RosyTalk window returns an explicitly incomplete snapshot.
-5. A non-chat-like surface, non-empty draft, or ambiguous/absent composer/send control causes refusal rather than a guessed click.
-6. Submission and remote-authored Room expressions are refused while the Android 15-minute action switch is off or expired.
-7. A successful submission is reported as submitted with delivery unconfirmed.
-8. An explicitly authored Room expression is acknowledged with matching request ancestry, while its caption is absent from durable lineage.
-9. Closing the phone connection makes read, wait, submit, and expression writes fail closed.
+4. `rosytalk_diagnose_surface` returns only bounded structural metadata and the failed recognition
+   gate, including when the target is not foreground; it never returns UI content.
+5. A visible RosyTalk window returns an explicitly incomplete snapshot.
+6. A non-chat-like surface, non-empty draft, or ambiguous/absent composer/send control causes refusal rather than a guessed click.
+7. Submission and remote-authored Room expressions are refused while the Android 15-minute action switch is off or expired.
+8. A successful submission is reported as submitted with delivery unconfirmed.
+9. An explicitly authored Room expression is acknowledged with matching request ancestry, while its caption is absent from durable lineage.
+10. Closing the phone connection makes read, wait, submit, and expression writes fail closed.
 
 Read [Threat model](THREAT_MODEL.md) before placing sensitive conversations behind the bridge.

@@ -5,7 +5,7 @@ A deliberately narrow bridge between one visible RosyTalk window on an Android p
 ## What is included
 
 - **Android Aster Room:** selects one exact installed package, reads only its foreground accessibility tree, mirrors the most recent bounded visible snapshot in memory, renders seven explicit face states, and makes an outbound authenticated WebSocket connection.
-- **Local relay + MCP server:** exposes five baseline chat/lineage tools plus `rosytalk_room_status` and `rosytalk_set_expression`.
+- **Local relay + MCP server:** exposes five chat/lineage tools, one metadata-only surface diagnostic, plus `rosytalk_room_status` and `rosytalk_set_expression`.
 - **Windows launchers:** generate separate phone/MCP secrets, install locked dependencies, build and run the relay, and optionally start an already-configured OpenAI Secure MCP Tunnel.
 - **Security and setup documentation:** explains the trust boundaries, incomplete UI snapshots, inferred sender labels, stale-revision protection, and the difference between a UI submit action and confirmed delivery.
 
@@ -14,7 +14,7 @@ The bridge does not export a complete thread, prove who authored visible text, r
 ## Build status
 
 - Relay TypeScript check, build, and automated tests pass.
-- `npm run commission:mock` exercises an actual authenticated MCP roundtrip through all seven v0.3 tools, a reply update, stale-submit refusal, explicit Room state, and the no-message-bodies/no-expression-captions lineage invariant.
+- `npm run commission:mock` exercises an actual authenticated MCP roundtrip through all eight v0.4 tools, a reply update, stale-submit refusal, explicit Room state, metadata-only surface diagnostics, and the no-message-bodies/no-expression-captions lineage invariant.
 - Android source is included and statically reviewed. Build it with Android Studio or the documented Gradle/JDK/SDK versions.
 - No prebuilt APK is claimed in this source package unless a file is explicitly present under `release/`.
 - PowerShell launchers were statically reviewed; this Linux build environment did not contain PowerShell for an execution test.
@@ -28,7 +28,7 @@ The bridge does not export a complete thread, prove who authored visible text, r
 5. Verify read-only operation before temporarily enabling submission.
 6. If connecting ChatGPT, follow [Connect ChatGPT](docs/CONNECT_CHATGPT.md), review the [threat model](docs/THREAT_MODEL.md), then use the ordered [first-conversation commissioning runbook](docs/COMMISSION_FIRST_CONVERSATION.md).
 
-The exact verification boundary for this source release is recorded in [v0.3 release notes](docs/RELEASE_v0.3.md).
+The exact verification boundary for this source release is recorded in [v0.4 release notes](docs/RELEASE_v0.4.md).
 
 ## Safety invariants
 
@@ -43,7 +43,7 @@ The exact verification boundary for this source release is recorded in [v0.3 rel
 - A local append-only, hash-linked lineage records observation/action metadata—not message bodies—so the latest state does not erase how the bridge reached it.
 - If lineage cannot be written before a submit, the phone is not contacted. If it fails after dispatch, the result stays indeterminate, later submits are blocked, and the phone connection is closed so its temporary authorization is cleared.
 
-## Causal lineage in v0.3
+## Causal lineage
 
 Every distinct Android observation carries an event ID, parent event ID, and phone-local
 sequence. A submission must cite both the exact revision and observation event ID it acts on.
@@ -60,7 +60,7 @@ with full disk control did not replace the complete file, so copy/checkpoint its
 the relay host when that threat matters. The journal intentionally contains no conversation or
 submitted message text and is not a transcript.
 
-Run only one relay process against a lineage file. v0.3 deliberately performs no automatic
+Run only one relay process against a lineage file. v0.4 deliberately performs no automatic
 truncation or provenance-destroying rotation. For long-running growth, stop the relay, archive
 the journal with its reported head hash, and start a new explicitly named file. The active
 journal is loaded into memory, so this version is a bounded personal bridge rather than a

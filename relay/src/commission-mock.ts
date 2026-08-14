@@ -28,6 +28,7 @@ const EXPRESSION_CAPTION = "Mock commissioning blush";
 const REQUIRED_TOOLS = [
   "rosytalk_status",
   "rosytalk_room_status",
+  "rosytalk_diagnose_surface",
   "rosytalk_read_visible",
   "rosytalk_wait_for_update",
   "rosytalk_read_lineage",
@@ -202,6 +203,50 @@ async function main(): Promise<void> {
       const request: RelayRequest = parsed.data;
 
       switch (request.method) {
+        case "surface.diagnose": {
+          send(phone!, {
+            type: "response",
+            id: request.id,
+            ok: true,
+            result: {
+              scope: "foreground_target_metadata_only",
+              targetConfigured: true,
+              targetForeground: true,
+              rootBounds: { left: 0, top: 0, right: 1080, bottom: 1920 },
+              windowBounds: { left: 0, top: 0, right: 1080, bottom: 1920 },
+              observedNodeCount: 24,
+              nodeTraversalTruncated: false,
+              composerCandidateCount: 1,
+              sendControlCandidateCount: 1,
+              composerCandidates: [{
+                className: "android.widget.EditText",
+                viewId: `${TARGET_PACKAGE}:id/message_composer`,
+                bounds: { left: 20, top: 900, right: 760, bottom: 1010 },
+                enabled: true,
+                supportedActionIds: [2_097_152],
+                supportedActionsTruncated: false,
+              }],
+              sendControlCandidates: [{
+                className: "android.widget.ImageButton",
+                viewId: `${TARGET_PACKAGE}:id/send_button`,
+                bounds: { left: 780, top: 900, right: 1060, bottom: 1010 },
+                enabled: true,
+                supportedActionIds: [16],
+                supportedActionsTruncated: false,
+              }],
+              composerCandidatesTruncated: false,
+              sendControlCandidatesTruncated: false,
+              singleComposerCandidate: true,
+              adjacentSendControlCount: 1,
+              composerHasAdjacentSendControl: true,
+              composerHasMessageSignal: true,
+              composerHasImeSendAction: false,
+              conversationContextAboveComposer: true,
+              failureStage: "ready",
+            },
+          });
+          return;
+        }
         case "chat.snapshot": {
           const current = snapshot(state);
           send(phone!, {
@@ -287,7 +332,7 @@ async function main(): Promise<void> {
       device: {
         id: "commission-mock-phone",
         name: "Mock Android RosyTalk",
-        appVersion: "0.3.0-commission",
+        appVersion: "0.4.0-commission",
         androidVersion: "mock",
       },
       capabilities: {
@@ -302,7 +347,7 @@ async function main(): Promise<void> {
     send(phone, { type: "event", event: "chat.updated", snapshot: snapshot(state) });
     await waitUntil(() => app.broker.status().latestRevision === 1);
 
-    const client = new Client({ name: "rosytalk-commission-mock", version: "0.3.0" });
+    const client = new Client({ name: "rosytalk-commission-mock", version: "0.4.0" });
     const transport = new StreamableHTTPClientTransport(mcpUrl, {
       requestInit: { headers: { Authorization: `Bearer ${MCP_TOKEN}` } },
     });
@@ -320,6 +365,16 @@ async function main(): Promise<void> {
     );
     assert.equal(status.connected, true);
     assert.equal(status.ready, true);
+
+    const surface = structured(
+      await client.callTool({ name: "rosytalk_diagnose_surface", arguments: {} }),
+    );
+    assert.equal(surface.scope, "foreground_target_metadata_only");
+    assert.equal(surface.failureStage, "ready");
+    assert.doesNotMatch(
+      JSON.stringify(surface),
+      /"(?:text|hintText|contentDescription|windowTitle|draft|conversationHash)"\s*:/i,
+    );
 
     const firstRead = structured(
       await client.callTool({

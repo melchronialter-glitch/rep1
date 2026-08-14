@@ -38,11 +38,11 @@ jobs:
       - name: Validate Gradle wrapper
         uses: gradle/actions/wrapper-validation@v4
 
-      - name: Build debug APK
+      - name: Test and build debug APK
         working-directory: android
         run: |
           chmod +x gradlew
-          ./gradlew :app:assembleDebug --no-daemon
+          ./gradlew :app:testDebugUnitTest :app:assembleDebug --no-daemon
 
       - name: Create SHA-256 manifest
         run: sha256sum android/app/build/outputs/apk/debug/app-debug.apk > app-debug.apk.sha256
@@ -50,7 +50,7 @@ jobs:
       - name: Upload installable APK
         uses: actions/upload-artifact@v4
         with:
-          name: aster-room-rosytalk-bridge-v0.3-debug-apk
+          name: aster-room-rosytalk-bridge-v0.4-debug-apk
           path: |
             android/app/build/outputs/apk/debug/app-debug.apk
             app-debug.apk.sha256
