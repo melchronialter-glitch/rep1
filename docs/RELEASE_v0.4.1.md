@@ -28,8 +28,15 @@ view ID. The generic v0.4 recognizer therefore refused the valid surface at
   In that case, uninstall v0.4 before installing v0.4.1, then restore the relay URL/token, selected
   RosyTalk package, Accessibility permission, and the temporary action switch as needed.
 
-## Verification boundary
+## Verified in this patch
 
-The pure Android policy tests and APK assembly must pass in CI. Physical-phone acceptance still
-requires a successful `rosytalk_read_visible`, a revision-bound `ime_enter` submission, and a newer
-visible response read through the bridge. A local UI action is not represented as remote delivery.
+- TypeScript check/build and all 45 relay tests pass.
+- The Android policy tests and `assembleDebug` pass in
+  [GitHub Actions run 31819719889](https://github.com/melchronialter-glitch/rep1/actions/runs/31819719889)
+  for commit `d4268e96788f76402cd6c2c470b7139be009ad00`.
+- The verified debug APK SHA-256 is
+  `b61bb9d618036b5edfa35c47f97d9bd8c834ab9e0ae88a1f13a666bd0bb60807`.
+
+Physical-phone acceptance still requires a successful `rosytalk_read_visible`, a revision-bound
+`ime_enter` submission, and a newer visible response read through the bridge. A local UI action is
+not represented as remote delivery.
