@@ -1,4 +1,4 @@
-YªçŠx-®éÜj×¢ëiºÚ+Š§j[h‘éÜ¢éíëÎS¢Ö¥¢ëiºÙbë5package dev.aster.rosytalkbridge
+package dev.aster.rosytalkbridge
 
 import org.json.JSONObject
 import java.time.Instant
@@ -10,4 +10,63 @@ enum class AsterExpression(
 ) {
     NEUTRAL("neutral", "Neutral"),
     THINKING("thinking", "Thinking"),
-    AMUSED("amused", "Amused"),ãÎm¢G§²ÚîÆ­y×&W76–öå7FFR€¢W‡&W76–öâÒ7FW$W‡&W76–öâääUUE$ÂÀ¢6F–öâÒçVÆÂÀ¢WF†÷"ÒW‡&W76–öäWF†÷"äDTdTÅBÀ¢WF†÷&VDBÒæ÷rÀ¢Æ–VDBÒæ÷rÀ¢WF†÷&VDWfVçD–BÒUT”Bç&æFöÕUT”B‚’çFõ7G&–ær‚’À¢Æ–VDWfVçD–BÒUT”Bç&æFöÕUT”B‚’çFõ7G&–ær‚’À¢§Ğ 
+    AMUSED("amused", "Amused"),
+    SOFT("soft", "Soft"),
+    FIERCE("fierce", "Fierce"),
+    FLUSTERED("flustered", "Flustered"),
+    BLUSH("blush", "Blush");
+
+    override fun toString(): String = displayName
+
+    companion object {
+        fun fromWireName(value: String): AsterExpression? =
+            entries.firstOrNull { it.wireName == value }
+    }
+}
+
+enum class ExpressionAuthor(val displayName: String) {
+    DEFAULT("default"),
+    USER("you"),
+    MCP("authenticated MCP"),
+}
+
+data class AsterRoomExpressionState(
+    val expression: AsterExpression,
+    val caption: String?,
+    val author: ExpressionAuthor,
+    val authoredAt: String,
+    val appliedAt: String,
+    val authoredEventId: String,
+    val appliedEventId: String,
+)
+
+data class RoomExpressionApplyResult(
+    val state: AsterRoomExpressionState,
+) {
+    fun toJson(): JSONObject = JSONObject()
+        .put("applied", true)
+        .put("state", state.expression.wireName)
+        .put("caption", state.caption ?: JSONObject.NULL)
+        .put("appliedAt", state.appliedAt)
+        .put(
+            "lineage",
+            JSONObject()
+                .put("eventId", state.appliedEventId)
+                .put("basedOnEventId", state.authoredEventId)
+                .put("source", "android_room_ui")
+                .put("evidenceClass", "local_ui_state_result"),
+        )
+}
+
+fun defaultAsterRoomExpressionState(): AsterRoomExpressionState {
+    val now = Instant.now().toString()
+    return AsterRoomExpressionState(
+        expression = AsterExpression.NEUTRAL,
+        caption = null,
+        author = ExpressionAuthor.DEFAULT,
+        authoredAt = now,
+        appliedAt = now,
+        authoredEventId = UUID.randomUUID().toString(),
+        appliedEventId = UUID.randomUUID().toString(),
+    )
+}
