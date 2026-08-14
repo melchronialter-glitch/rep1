@@ -35,7 +35,10 @@ invalid phone response.
 ## Verification
 
 - TypeScript check/build and all 46 relay tests pass locally.
-- Android unit tests and `assembleDebug` are delegated to GitHub Actions because this workspace
-  does not have the Android SDK or cached Gradle distribution.
+- Android unit tests and `assembleDebug` pass in
+  [GitHub Actions run 31823289760](https://github.com/melchronialter-glitch/rep1/actions/runs/31823289760)
+  for commit `3614e8cdb1d5c71a3047182f2b2887a57fed1f91`.
+- The verified debug APK SHA-256 is
+  `b714cc228fcac920ea5378c8ea25cb2eeaf8660f404b2f3fa06f6a43f9576c94`.
 - Physical-phone acceptance still requires a fresh visible read, a revision-bound `ime_enter`
   action, and a newer visible response. A successful local UI action is not proof of delivery.
