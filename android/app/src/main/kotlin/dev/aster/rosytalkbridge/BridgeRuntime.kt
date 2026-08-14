@@ -236,7 +236,7 @@ object BridgeRuntime : BridgeListener {
     }
 
     private fun dispatchActivity(event: BridgeActivityEvent) {
-        val deliver = { uiListener?.onActivityEvent(event) }
+        val deliver: () -> Unit = { uiListener?.onActivityEvent(event) }
         if (Looper.myLooper() == Looper.getMainLooper()) {
             deliver()
         } else {
