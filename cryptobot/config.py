@@ -1,0 +1,202 @@
+"""Environment-driven configuration. Single source of truth."""
+
+from __future__ import annotations
+
+from functools import lru_cache
+
+from pydantic_settings import BaseSettings, SettingsConfigDict
+
+
+class Settings(BaseSettings):
+    model_config = SettingsConfigDict(
+        env_file=".env",
+        env_file_encoding="utf-8",
+        extra="ignore",
+        case_sensitive=False,
+    )
+
+    # ---- Postgres ----
+    postgres_host: str = "localhost"
+    postgres_port: int = 5432
+    postgres_user: str = "cryptobot"
+    postgres_password: str = "cryptobot"
+    postgres_db: str = "cryptobot"
+
+    # ---- Redis ----
+    redis_host: str = "localhost"
+    redis_port: int = 6379
+    redis_db: int = 0
+
+    # ---- Anthropic ----
+    anthropic_api_key: str = ""
+    anthropic_model: str = "claude-sonnet-4-6"
+    anthropic_fast_model: str = "claude-haiku-4-5-20251001"
+
+    # ---- Phase B: market data ----
+    price_symbols: str = "btcusdt,ethusdt,solusdt,bnbusdt,xrpusdt,dogeusdt"
+    price_move_threshold_pct: float = 3.0
+    price_move_window_min: int = 60
+
+    # ---- Phase B: news ----
+    cryptopanic_api_key: str = ""
+    news_api_key: str = ""
+
+    # ---- Phase C: chain watchers ----
+    helius_api_key: str = ""
+    alchemy_api_key: str = ""
+    bsc_ws_url: str = ""  # websocket RPC, e.g. QuickNode free tier
+    pumpfun_min_initial_buy_sol: float = 1.0  # below → tier_hint "ignore"
+
+    # ---- Phase E: Telegram user account (Telethon listener) ----
+    telegram_user_api_id: str = ""
+    telegram_user_api_hash: str = ""
+    telegram_user_phone: str = ""
+    telegram_session_path: str = "data/tg_user.session"
+    # Comma-separated chat IDs and/or chat titles to listen to; empty = all.
+    tg_watch_chats: str = ""
+
+    # ---- Phase E: X (Twitter) scraper adapters ----
+    apify_api_token: str = ""
+    twitterapi_io_key: str = ""
+    x_watch_handles: str = "aeyakovenko,blknoiz06,theunipcs,MustStopMurad,frankdegods"
+    x_poll_interval_s: int = 120
+
+    # ---- Phase E: Reddit (public JSON API, no key) ----
+    reddit_subreddits: str = "CryptoCurrency,solana,CryptoMoonShots"
+    reddit_poll_interval_s: int = 300
+
+    # ---- Phase E: translation ----
+    translation_enabled: bool = True
+
+    # ---- Phase B: email digests ----
+    email_smtp_host: str = ""
+    email_smtp_port: int = 587
+    email_smtp_user: str = ""
+    email_smtp_pass: str = ""
+    email_from: str = ""
+    email_to: str = ""
+
+    # ---- Telegram outbound ----
+    telegram_bot_token: str = ""
+    telegram_chat_strict: str = ""
+    telegram_chat_medium: str = ""
+    telegram_chat_firehose: str = ""
+    telegram_chat_macro: str = ""
+    telegram_chat_dm: str = ""
+
+    # ---- Logging ----
+    log_level: str = "INFO"
+    log_json: bool = False
+
+    # ---- Phase G: market depth ----
+    coinglass_api_key: str = ""
+    indicator_rsi_period: int = 14
+    indicator_ema_short: int = 12
+    indicator_ema_long: int = 26
+    indicator_macd_signal: int = 9
+    orderbook_symbols: str = "BTCUSDT,ETHUSDT,SOLUSDT"
+    orderbook_imbalance_threshold: float = 0.3   # bid/(bid+ask) < this or > (1-this)
+    launch_radar_poll_interval_s: int = 3600
+    econ_calendar_poll_interval_s: int = 3600
+
+    # ---- Phase F: smart money + social intelligence ----
+    whale_min_sol: float = 500.0
+    whale_min_eth: float = 50.0
+    github_tracked_repos: str = ""
+    github_token: str = ""
+    narrative_spike_threshold: int = 10  # mentions in 1h to trigger spike alert
+
+    # ---- Phase H: learning loop ----
+    rug_forensic_min_samples: int = 20   # min labeled rugs before forensic agent runs
+    ml_model_path: str = "data/rug_model.joblib"
+    # Outcome tracker: re-check seen tokens and auto-label rug/notrug from
+    # their on-chain fate; retrain once enough new labels accumulate.
+    outcome_check_interval_s: int = 21600   # 6h
+    outcome_min_age_h: int = 6   # confirmed LP pulls are judged from 6h
+    outcome_max_age_d: int = 14
+    rug_retrain_min_new_labels: int = 25
+
+    # ---- Computed ----
+    @property
+    def postgres_dsn(self) -> str:
+        return (
+            f"postgresql://{self.postgres_user}:{self.postgres_password}"
+            f"@{self.postgres_host}:{self.postgres_port}/{self.postgres_db}"
+        )
+
+    @property
+    def redis_url(self) -> str:
+        return f"redis://{self.redis_host}:{self.redis_port}/{self.redis_db}"
+
+    @property
+    def orderbook_symbol_list(self) -> list[str]:
+        return [s.strip().upper() for s in self.orderbook_symbols.split(",") if s.strip()]
+
+    @property
+    def price_symbol_list(self) -> list[str]:
+        """``price_symbols`` parsed into a lowercase list (comma-separated env value)."""
+        return [s.strip().lower() for s in self.price_symbols.split(",") if s.strip()]
+
+    @property
+    def tg_watch_chat_set(self) -> set[str]:
+        """``tg_watch_chats`` parsed into a lowercase set (IDs and/or titles)."""
+        return {c.strip().lower() for c in self.tg_watch_chats.split(",") if c.strip()}
+
+    @property
+    def x_watch_handle_list(self) -> list[str]:
+        """``x_watch_handles`` parsed into a list (comma-separated env value)."""
+        return [h.strip().lstrip("@") for h in self.x_watch_handles.split(",") if h.strip()]
+
+    @property
+    def reddit_subreddit_list(self) -> list[str]:
+        """``reddit_subreddits`` parsed into a list (comma-separated env value)."""
+        return [s.strip().removeprefix("r/") for s in self.reddit_subreddits.split(",") if s.strip()]
+
+    @property
+    def github_repo_list(self) -> list[str]:
+        return [r.strip() for r in self.github_tracked_repos.split(",") if r.strip()]
+
+    @property
+    def telegram_user_configured(self) -> bool:
+        return bool(self.telegram_user_api_id and self.telegram_user_api_hash)
+
+    @property
+    def email_configured(self) -> bool:
+        return bool(self.email_smtp_host and self.email_from and self.email_to)
+
+    @property
+    def telegram_known_chat_ids(self) -> set[str]:
+        """All configured chat IDs — inbound commands are accepted only from these."""
+        return {
+            cid
+            for cid in (
+                self.telegram_chat_strict,
+                self.telegram_chat_medium,
+                self.telegram_chat_firehose,
+                self.telegram_chat_macro,
+                self.telegram_chat_dm,
+            )
+            if cid
+        }
+
+    def telegram_chat_id(self, channel: str) -> str:
+        """Return the chat ID for a logical channel name.
+
+        channel ∈ {"strict", "medium", "firehose", "macro", "dm"}
+        """
+        mapping = {
+            "strict": self.telegram_chat_strict,
+            "medium": self.telegram_chat_medium,
+            "firehose": self.telegram_chat_firehose,
+            "macro": self.telegram_chat_macro,
+            "dm": self.telegram_chat_dm,
+        }
+        chat_id = mapping.get(channel, "")
+        if not chat_id:
+            raise ValueError(f"No chat ID configured for channel '{channel}'")
+        return chat_id
+
+
+@lru_cache(maxsize=1)
+def get_settings() -> Settings:
+    return Settings()

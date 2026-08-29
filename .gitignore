@@ -1,0 +1,32 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+build/
+dist/
+.venv/
+venv/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+
+# Env / secrets
+.env
+.env.local
+.env.*.local
+
+# Data
+data/
+*.db
+*.sqlite*
+*.parquet
+
+# IDE
+.idea/
+.vscode/
+*.swp
+
+# Docker volumes (compose-managed; just in case bind mounts are added)
+pgdata/
+redisdata/
