@@ -1,0 +1,33 @@
+{
+  "name": "aster-rosytalk-bridge",
+  "version": "0.4.0",
+  "private": true,
+  "type": "module",
+  "description": "Exact-app Android RosyTalk accessibility bridge for MCP",
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "check": "tsc -p tsconfig.json --noEmit",
+    "dev": "tsx watch relay/src/index.ts",
+    "start": "node dist/relay/src/index.js",
+    "mock-phone": "tsx relay/src/mock-phone.ts",
+    "commission:mock": "tsx relay/src/commission-mock.ts",
+    "test": "node --import tsx --test relay/test/*.test.ts",
+    "test:all": "npm run check && npm test"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "1.30.0",
+    "express": "5.1.0",
+    "ws": "8.21.2",
+    "zod": "4.4.3"
+  },
+  "devDependencies": {
+    "@types/express": "5.0.3",
+    "@types/node": "24.10.1",
+    "@types/ws": "8.18.1",
+    "tsx": "4.20.6",
+    "typescript": "5.9.3"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}
