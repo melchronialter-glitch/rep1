@@ -75,7 +75,7 @@ export function createRosyTalkBridgeApp(config: BridgeConfig): RosyTalkBridgeApp
   const endpointSockets = new WebSocketServer({ noServer: true, maxPayload: MAX_PHONE_MESSAGE_BYTES });
   const lineage = new LineageStore(config.lineageFile);
   const broker = new PhoneBroker(config.requestTimeoutMs, lineage);
-  const router = new EndpointRouter();
+  const router = new EndpointRouter(config.roomStateFile);
 
   const mcpAuthorized = (request: Parameters<typeof hasBearer>[0]): boolean => {
     if (config.mcpToken && hasBearer(request, config.mcpToken)) return true;
