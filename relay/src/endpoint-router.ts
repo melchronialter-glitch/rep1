@@ -6,7 +6,7 @@ import { z } from "zod";
 
 const id=z.string().min(1).max(128).regex(/^[A-Za-z0-9._:-]+$/);
 export const endpointHelloSchema=z.object({
- type:z.literal("endpoint.hello"),endpointId:id,label:z.string().min(1).max(200),
+ type:z.literal("endpoint.hello"),endpointId:id,identityId:id.optional(),instanceId:id.optional(),label:z.string().min(1).max(200),
  kind:z.enum(["chatgpt_thread","ai","laptop","custom"]),
  capabilities:z.object({receive:z.boolean(),send:z.boolean()}).strict(),
 }).strict();
@@ -27,7 +27,7 @@ export const routedMessageSchema=z.object({
 }).strict();
 export type RoutedMessage=z.infer<typeof routedMessageSchema>;
 type EndpointHello=z.infer<typeof endpointHelloSchema>;
-interface Endpoint{hello:EndpointHello;socket:WebSocket;connectedAt:string}
+interface Endpoint{hello:EndpointHello;connectionId:string;socket:WebSocket;connectedAt:string}
 interface Room{roomId:string;members:Set<string>;createdAt:string}
 export interface DeliveryResult{message:RoutedMessage;delivered:string[];unavailable:string[]}
 
@@ -46,8 +46,8 @@ export class EndpointRouter{
     if(!endpointId){
      const hello=endpointHelloSchema.parse(value);const old=this.endpoints.get(hello.endpointId);
      if(old)old.socket.close(4009,"replaced");
-     endpointId=hello.endpointId;this.endpoints.set(endpointId,{hello,socket,connectedAt:new Date().toISOString()});
-     clearTimeout(timer);socket.send(JSON.stringify({type:"endpoint.accepted",endpointId,rooms:this.roomsFor(endpointId)}));return;
+     endpointId=hello.endpointId;const normalizedHello={...hello,identityId:hello.identityId??hello.endpointId,instanceId:hello.instanceId??hello.endpointId};this.endpoints.set(endpointId,{hello:normalizedHello,connectionId:randomUUID(),socket,connectedAt:new Date().toISOString()});
+     clearTimeout(timer);socket.send(JSON.stringify({type:"endpoint.accepted",endpointId,identityId:normalizedHello.identityId,instanceId:normalizedHello.instanceId,connectionId:this.endpoints.get(endpointId)!.connectionId,rooms:this.roomsFor(endpointId)}));return;
     }
     const ep=this.endpoints.get(endpointId);if(!ep)throw new Error("endpoint not registered");
     if(value?.type==="room.join"){this.join(endpointId,id.parse(value.roomId));socket.send(JSON.stringify({type:"room.joined",roomId:value.roomId}));return;}
@@ -70,7 +70,7 @@ export class EndpointRouter{
  leave(endpointId:string,roomId:string){this.rooms.get(id.parse(roomId))?.members.delete(id.parse(endpointId));this.persist();}
  listRooms(){return[...this.rooms.values()].map(r=>this.roomView(r));}
  roomsFor(endpointId:string){return this.listRooms().filter(r=>r.members.includes(endpointId));}
- list(){return[...this.endpoints.values()].map(({hello,connectedAt})=>({...hello,connectedAt,rooms:this.roomsFor(hello.endpointId).map(r=>r.roomId)}));}
+ list(){return[...this.endpoints.values()].map(({hello,connectionId,connectedAt})=>({...hello,connectionId,connectedAt,rooms:this.roomsFor(hello.endpointId).map(r=>r.roomId)}));}
  history(conversationId?:string,limit=100){const xs=conversationId?this.messages.filter(x=>x.conversationId===conversationId):this.messages;return xs.slice(-Math.max(1,Math.min(limit,1000)));}
  catchup(roomId:string,afterMessageId:string|null,limit=200){let xs=this.messages.filter(x=>x.roomId===roomId);if(afterMessageId){const i=xs.findIndex(x=>x.messageId===afterMessageId);if(i>=0)xs=xs.slice(i+1);}return xs.slice(-Math.max(1,Math.min(limit,1000)));}
 
