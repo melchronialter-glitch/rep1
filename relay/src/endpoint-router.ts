@@ -8,7 +8,7 @@ const id=z.string().min(1).max(128).regex(/^[A-Za-z0-9._:-]+$/);
 export const endpointHelloSchema=z.object({
  type:z.literal("endpoint.hello"),endpointId:id,identityId:id.optional(),instanceId:id.optional(),label:z.string().min(1).max(200),
  kind:z.enum(["chatgpt_thread","ai","laptop","custom"]),
- capabilities:z.object({receive:z.boolean(),send:z.boolean()}).strict(),
+ capabilities:z.object({receive:z.boolean(),send:z.boolean(),spontaneous:z.boolean().default(false),roomBroadcast:z.boolean().default(true),stimulus:z.boolean().default(true)}).strict(),
 }).strict();
 export const presenceFrameSchema=z.object({
  frameId:z.string().uuid(),kind:z.enum(["text","state","attention","signal","artifact_ref","observation"]),
@@ -81,7 +81,7 @@ export class EndpointRouter{
 
  inject(input:{roomId:string;conversationId:string;text:string;members?:string[]}){
   const room=this.rooms.get(id.parse(input.roomId));if(!room)throw new Error("room not found");
-  const stimulusId=randomUUID();const targets=input.members?.map(id.parse)??[...room.members];
+  const stimulusId=randomUUID();const targets=(input.members?.map(id.parse)??[...room.members]).filter(target=>this.endpoints.get(target)?.hello.capabilities.stimulus!==false);
   const results=targets.map(target=>this.send({from:"experiment",to:[target],roomId:null,conversationId:input.conversationId,text:input.text,stimulusId}));
   return{stimulusId,targets,results};
  }
@@ -90,7 +90,7 @@ export class EndpointRouter{
   if(this.messages.some(x=>x.messageId===message.messageId))return{message,delivered:[],unavailable:[]};
   this.messages.push(message);if(this.messages.length>this.maxMessages)this.messages.splice(0,this.messages.length-this.maxMessages);this.persist();
   let targets=[...message.to];
-  if(message.roomId){const room=this.rooms.get(message.roomId);if(!room)throw new Error("room not found");targets=[...new Set([...targets,...room.members])].filter(x=>x!==message.from);}
+  if(message.roomId){const room=this.rooms.get(message.roomId);if(!room)throw new Error("room not found");targets=[...new Set([...targets,...room.members])].filter(x=>x!==message.from&&this.endpoints.get(x)?.hello.capabilities.roomBroadcast!==false);}
   const delivered:string[]=[],unavailable:string[]=[];if(message.ttl<=0)return{message,delivered,unavailable:targets};
   for(const target of targets){if(message.hops.includes(target))continue;const ep=this.endpoints.get(target);if(!ep||!ep.hello.capabilities.receive||ep.socket.readyState!==WebSocket.OPEN){unavailable.push(target);continue;}ep.socket.send(JSON.stringify({...message,ttl:message.ttl-1,hops:[...message.hops,"aster-router"]}));delivered.push(target);}
   return{message,delivered,unavailable};
