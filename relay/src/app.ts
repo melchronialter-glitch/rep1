@@ -71,10 +71,8 @@ export function createRosyTalkBridgeApp(config: BridgeConfig): RosyTalkBridgeApp
     : { host: config.host };
   const app = createMcpExpressApp(appOptions);
   const httpServer = createServer(app);
-  const phoneSockets = new WebSocketServer({
-    noServer: true,
-    maxPayload: MAX_PHONE_MESSAGE_BYTES,
-  });
+  const phoneSockets = new WebSocketServer({ noServer: true, maxPayload: MAX_PHONE_MESSAGE_BYTES });
+  const endpointSockets = new WebSocketServer({ noServer: true, maxPayload: MAX_PHONE_MESSAGE_BYTES });
   const lineage = new LineageStore(config.lineageFile);
   const broker = new PhoneBroker(config.requestTimeoutMs, lineage);
   const router = new EndpointRouter();
@@ -141,7 +139,7 @@ export function createRosyTalkBridgeApp(config: BridgeConfig): RosyTalkBridgeApp
         socket.destroy();
         return;
       }
-      phoneSockets.handleUpgrade(request, socket, head, (webSocket) => router.attach(webSocket));
+      endpointSockets.handleUpgrade(request, socket, head, (webSocket) => router.attach(webSocket));
       return;
     }
     if (pathname !== "/phone") {
@@ -180,6 +178,11 @@ export function createRosyTalkBridgeApp(config: BridgeConfig): RosyTalkBridgeApp
       broker.close();
       router.close();
       for (const socket of phoneSockets.clients) socket.close(1001, "Relay stopped");
+      for (const socket of endpointSockets.clients) socket.close(1001, "Relay stopped");
+      await new Promise<void>((resolve, reject) => {
+        endpointSockets.close(() => resolve());
+        setTimeout(() => reject(new Error("Endpoint WebSocket shutdown timed out")), 3000).unref();
+      }).catch(() => undefined);
       await new Promise<void>((resolve, reject) => {
         phoneSockets.close(() => resolve());
         setTimeout(() => reject(new Error("WebSocket shutdown timed out")), 3000).unref();
