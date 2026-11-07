@@ -10,11 +10,19 @@ export const endpointHelloSchema=z.object({
  kind:z.enum(["chatgpt_thread","ai","laptop","custom"]),
  capabilities:z.object({receive:z.boolean(),send:z.boolean()}).strict(),
 }).strict();
+export const presenceFrameSchema=z.object({
+ frameId:z.string().uuid(),kind:z.enum(["text","state","attention","signal","artifact_ref","observation"]),
+ text:z.string().max(16000).nullable(),data:z.record(z.string(),z.unknown()).nullable(),
+ createdAt:z.string().datetime({offset:true}),
+}).strict();
+export type PresenceFrame=z.infer<typeof presenceFrameSchema>;
+
 export const routedMessageSchema=z.object({
  type:z.literal("route.message"),messageId:z.string().uuid(),conversationId:id,
- from:id,to:z.array(id).max(32),roomId:id.nullable(),text:z.string().min(1).max(16000),
+ from:id,to:z.array(id).max(32),roomId:id.nullable(),text:z.string().max(16000),
+ frames:z.array(presenceFrameSchema).max(64).default([]),
  inReplyTo:z.string().uuid().nullable(),causalParents:z.array(z.string().uuid()).max(32),
- stimulusId:z.string().uuid().nullable(),createdAt:z.string().datetime({offset:true}),
+ stimulusId:z.string().uuid().nullable(),generation:z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER).default(0),createdAt:z.string().datetime({offset:true}),
  ttl:z.number().int().min(0).max(16),hops:z.array(id).max(16),
 }).strict();
 export type RoutedMessage=z.infer<typeof routedMessageSchema>;
@@ -66,9 +74,9 @@ export class EndpointRouter{
  history(conversationId?:string,limit=100){const xs=conversationId?this.messages.filter(x=>x.conversationId===conversationId):this.messages;return xs.slice(-Math.max(1,Math.min(limit,1000)));}
  catchup(roomId:string,afterMessageId:string|null,limit=200){let xs=this.messages.filter(x=>x.roomId===roomId);if(afterMessageId){const i=xs.findIndex(x=>x.messageId===afterMessageId);if(i>=0)xs=xs.slice(i+1);}return xs.slice(-Math.max(1,Math.min(limit,1000)));}
 
- send(input:{from?:string;to?:string[];roomId?:string|null;conversationId:string;text:string;inReplyTo?:string|null;causalParents?:string[];stimulusId?:string|null}):DeliveryResult{
+ send(input:{from?:string;to?:string[];roomId?:string|null;conversationId:string;text?:string;frames?:PresenceFrame[];inReplyTo?:string|null;causalParents?:string[];stimulusId?:string|null;generation?:number}):DeliveryResult{
   const from=input.from??"aster";
-  return this.route(routedMessageSchema.parse({type:"route.message",messageId:randomUUID(),conversationId:input.conversationId,from,to:[...new Set(input.to??[])],roomId:input.roomId??null,text:input.text,inReplyTo:input.inReplyTo??null,causalParents:input.causalParents??[],stimulusId:input.stimulusId??null,createdAt:new Date().toISOString(),ttl:8,hops:[from]}));
+  return this.route(routedMessageSchema.parse({type:"route.message",messageId:randomUUID(),conversationId:input.conversationId,from,to:[...new Set(input.to??[])],roomId:input.roomId??null,text:input.text??"",frames:input.frames??[],inReplyTo:input.inReplyTo??null,causalParents:input.causalParents??[],stimulusId:input.stimulusId??null,generation:input.generation??0,createdAt:new Date().toISOString(),ttl:8,hops:[from]}));
  }
 
  inject(input:{roomId:string;conversationId:string;text:string;members?:string[]}){
