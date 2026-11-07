@@ -9,11 +9,13 @@ import { audit } from "./audit.js";
 import { createRosyTalkMcpServer } from "./mcp.js";
 import { LineageStore } from "./lineage.js";
 import { PhoneBroker } from "./phone-broker.js";
+import { EndpointRouter } from "./endpoint-router.js";
 import { MAX_PHONE_MESSAGE_BYTES } from "./protocol.js";
 import { hasBearer, isLoopback } from "./security.js";
 
 export interface RosyTalkBridgeApp {
   broker: PhoneBroker;
+  router: EndpointRouter;
   httpServer: HttpServer;
   start(): Promise<{ host: string; port: number }>;
   stop(): Promise<void>;
@@ -75,6 +77,7 @@ export function createRosyTalkBridgeApp(config: BridgeConfig): RosyTalkBridgeApp
   });
   const lineage = new LineageStore(config.lineageFile);
   const broker = new PhoneBroker(config.requestTimeoutMs, lineage);
+  const router = new EndpointRouter();
 
   const mcpAuthorized = (request: Parameters<typeof hasBearer>[0]): boolean => {
     if (config.mcpToken && hasBearer(request, config.mcpToken)) return true;
@@ -96,7 +99,7 @@ export function createRosyTalkBridgeApp(config: BridgeConfig): RosyTalkBridgeApp
       return;
     }
 
-    const mcpServer = createRosyTalkMcpServer(broker, lineage);
+    const mcpServer = createRosyTalkMcpServer(broker, lineage, router);
     // Omitting a session generator selects the SDK's stateless mode. The cast works
     // around an exact-optional typing mismatch inside SDK 1.30.0's Node wrapper.
     const transport = new StreamableHTTPServerTransport();
@@ -132,6 +135,15 @@ export function createRosyTalkBridgeApp(config: BridgeConfig): RosyTalkBridgeApp
       socket.destroy();
       return;
     }
+    if (pathname === "/endpoint") {
+      if (!hasBearer(request, config.mcpToken ?? "")) {
+        socket.write("HTTP/1.1 401 Unauthorized\r\nConnection: close\r\n\r\n");
+        socket.destroy();
+        return;
+      }
+      phoneSockets.handleUpgrade(request, socket, head, (webSocket) => router.attach(webSocket));
+      return;
+    }
     if (pathname !== "/phone") {
       socket.destroy();
       return;
@@ -151,6 +163,7 @@ export function createRosyTalkBridgeApp(config: BridgeConfig): RosyTalkBridgeApp
 
   return {
     broker,
+    router,
     httpServer,
     start: () =>
       new Promise((resolve, reject) => {
@@ -165,6 +178,7 @@ export function createRosyTalkBridgeApp(config: BridgeConfig): RosyTalkBridgeApp
       }),
     stop: async () => {
       broker.close();
+      router.close();
       for (const socket of phoneSockets.clients) socket.close(1001, "Relay stopped");
       await new Promise<void>((resolve, reject) => {
         phoneSockets.close(() => resolve());
