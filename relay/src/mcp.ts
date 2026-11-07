@@ -57,7 +57,7 @@ export function createRosyTalkMcpServer(
   router: EndpointRouter,
 ): McpServer {
   const server = new McpServer(
-    { name: "aster-android-rosytalk", version: "0.4.0" },
+    { name: "aster-shared-presence-bridge", version: "0.5.0" },
     {
       instructions:
         "Access only the exact Android app selected in the phone bridge. A snapshot contains only text visible in the current target window and is never a complete conversation history. Preserve every item's sender and senderBasis fields: screen_geometry is an inference, and unknown must remain unknown. Never attribute text to a person more confidently than the source data permits. Preserve lineage.eventId and parentEventId when comparing observations. rosytalk_diagnose_surface is metadata-only: do not use it to request, infer, or reconstruct UI content. Message submission is allowed only while the phone's per-session switch is enabled and must cite both expected_revision and expected_snapshot_id. A successful submit result means the UI action was performed; deliveryConfirmed is always false and must not be described as delivery. A room expression is an explicit state authored through rosytalk_set_expression; never infer an expression from message text, sentiment, or behavior. The durable lineage is metadata-only and is not a transcript.",
