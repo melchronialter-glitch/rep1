@@ -1,4 +1,6 @@
 import { randomUUID } from "node:crypto";
+import { mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
+import { dirname } from "node:path";
 import WebSocket from "ws";
 import { z } from "zod";
 
@@ -25,7 +27,7 @@ export class EndpointRouter{
  private endpoints=new Map<string,Endpoint>();
  private rooms=new Map<string,Room>();
  private messages:RoutedMessage[]=[];
- constructor(private readonly maxMessages=10000){}
+ constructor(private readonly stateFile?:string,private readonly maxMessages=10000){this.load();}
 
  attach(socket:WebSocket):void{
   let endpointId:string|null=null;
@@ -55,9 +57,9 @@ export class EndpointRouter{
   socket.on("close",()=>{clearTimeout(timer);if(endpointId&&this.endpoints.get(endpointId)?.socket===socket)this.endpoints.delete(endpointId);});
  }
 
- createRoom(roomId:string,members:string[]=[]){const rid=id.parse(roomId);let room=this.rooms.get(rid);if(!room){room={roomId:rid,members:new Set(),createdAt:new Date().toISOString()};this.rooms.set(rid,room);}for(const m of members)room.members.add(id.parse(m));return this.roomView(room);}
- join(endpointId:string,roomId:string){const rid=id.parse(roomId),eid=id.parse(endpointId);let room=this.rooms.get(rid);if(!room)room=this.rooms.set(rid,{roomId:rid,members:new Set(),createdAt:new Date().toISOString()}).get(rid)!;room.members.add(eid);return this.roomView(room);}
- leave(endpointId:string,roomId:string){this.rooms.get(id.parse(roomId))?.members.delete(id.parse(endpointId));}
+ createRoom(roomId:string,members:string[]=[]){const rid=id.parse(roomId);let room=this.rooms.get(rid);if(!room){room={roomId:rid,members:new Set(),createdAt:new Date().toISOString()};this.rooms.set(rid,room);}for(const m of members)room.members.add(id.parse(m));this.persist();return this.roomView(room);}
+ join(endpointId:string,roomId:string){const rid=id.parse(roomId),eid=id.parse(endpointId);let room=this.rooms.get(rid);if(!room)room=this.rooms.set(rid,{roomId:rid,members:new Set(),createdAt:new Date().toISOString()}).get(rid)!;room.members.add(eid);this.persist();return this.roomView(room);}
+ leave(endpointId:string,roomId:string){this.rooms.get(id.parse(roomId))?.members.delete(id.parse(endpointId));this.persist();}
  listRooms(){return[...this.rooms.values()].map(r=>this.roomView(r));}
  roomsFor(endpointId:string){return this.listRooms().filter(r=>r.members.includes(endpointId));}
  list(){return[...this.endpoints.values()].map(({hello,connectedAt})=>({...hello,connectedAt,rooms:this.roomsFor(hello.endpointId).map(r=>r.roomId)}));}
@@ -78,7 +80,7 @@ export class EndpointRouter{
 
  private route(message:RoutedMessage):DeliveryResult{
   if(this.messages.some(x=>x.messageId===message.messageId))return{message,delivered:[],unavailable:[]};
-  this.messages.push(message);if(this.messages.length>this.maxMessages)this.messages.splice(0,this.messages.length-this.maxMessages);
+  this.messages.push(message);if(this.messages.length>this.maxMessages)this.messages.splice(0,this.messages.length-this.maxMessages);this.persist();
   let targets=[...message.to];
   if(message.roomId){const room=this.rooms.get(message.roomId);if(!room)throw new Error("room not found");targets=[...new Set([...targets,...room.members])].filter(x=>x!==message.from);}
   const delivered:string[]=[],unavailable:string[]=[];if(message.ttl<=0)return{message,delivered,unavailable:targets};
@@ -86,5 +88,7 @@ export class EndpointRouter{
   return{message,delivered,unavailable};
  }
  private roomView(r:Room){return{roomId:r.roomId,members:[...r.members],createdAt:r.createdAt};}
+ private persist(){if(!this.stateFile)return;mkdirSync(dirname(this.stateFile),{recursive:true});const tmp=this.stateFile+".tmp";writeFileSync(tmp,JSON.stringify({rooms:this.listRooms(),messages:this.messages},null,2),"utf8");renameSync(tmp,this.stateFile);}
+ private load(){if(!this.stateFile)return;try{const x=JSON.parse(readFileSync(this.stateFile,"utf8"));for(const r of x.rooms??[])this.rooms.set(id.parse(r.roomId),{roomId:r.roomId,members:new Set((r.members??[]).map((m:unknown)=>id.parse(m))),createdAt:r.createdAt});for(const m of x.messages??[])this.messages.push(routedMessageSchema.parse(m));}catch(error:any){if(error?.code!=="ENOENT")throw error;}}
  close(){for(const e of this.endpoints.values())e.socket.close(1001,"router stopped");this.endpoints.clear();}
 }
