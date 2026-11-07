@@ -17,6 +17,7 @@ const envSchema = z.object({
   REQUEST_TIMEOUT_MS: z.coerce.number().int().min(5000).max(120000).default(15000),
   ALLOWED_HOSTS: z.string().optional(),
   LINEAGE_FILE: z.string().min(1).max(4096).default(".aster-runtime/rosytalk-lineage.jsonl"),
+  ROOM_STATE_FILE: z.string().min(1).max(4096).default(".aster-runtime/bridge-rooms.json"),
 });
 
 export interface BridgeConfig {
@@ -28,6 +29,7 @@ export interface BridgeConfig {
   requestTimeoutMs: number;
   allowedHosts: string[] | undefined;
   lineageFile: string;
+  roomStateFile: string;
 }
 
 export function loadConfig(env: NodeJS.ProcessEnv = process.env): BridgeConfig {
@@ -61,5 +63,6 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): BridgeConfig {
     requestTimeoutMs: parsed.REQUEST_TIMEOUT_MS,
     allowedHosts: allowedHosts?.length ? allowedHosts : undefined,
     lineageFile: parsed.LINEAGE_FILE,
+    roomStateFile: parsed.ROOM_STATE_FILE,
   };
 }
