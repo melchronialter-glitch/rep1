@@ -333,12 +333,43 @@ export function createRosyTalkMcpServer(
   );
 
   server.registerTool(
+    "bridge_list_rooms",
+    {
+      title:"List shared bridge rooms",description:"List room membership without collapsing member identities.",
+      inputSchema:{},outputSchema:{rooms:z.array(z.object({roomId:z.string(),members:z.array(z.string()),createdAt:z.string()}))},annotations:readOnlyAnnotations,
+    },
+    async()=>textAndStructured({rooms:router.listRooms()}),
+  );
+
+  server.registerTool(
+    "bridge_create_room",
+    {
+      title:"Create or extend a shared bridge room",description:"Create a shared room and optionally add explicit endpoint identities.",
+      inputSchema:{room_id:z.string().min(1).max(128),members:z.array(z.string().min(1).max(128)).max(64).default([])},
+      outputSchema:{room:z.object({roomId:z.string(),members:z.array(z.string()),createdAt:z.string()})},annotations:expressionAnnotations,
+    },
+    async({room_id,members})=>textAndStructured({room:router.createRoom(room_id,members)}),
+  );
+
+  server.registerTool(
+    "bridge_inject_stimulus",
+    {
+      title:"Inject one invariant stimulus across room members",
+      description:"Send exactly one stimulus text under a shared stimulus ID to multiple distinct identities so their resulting trajectories can be compared without merging them.",
+      inputSchema:{room_id:z.string().min(1).max(128),conversation_id:z.string().min(1).max(128),text:z.string().min(1).max(MAX_SUBMIT_TEXT_CHARACTERS),members:z.array(z.string().min(1).max(128)).max(64).optional()},
+      outputSchema:{stimulusId:z.string().uuid(),targets:z.array(z.string()),results:z.array(z.object({}).passthrough())},annotations:submitAnnotations,
+    },
+    async({room_id,conversation_id,text,members})=>textAndStructured(router.inject({roomId:room_id,conversationId:conversation_id,text,members})),
+  );
+
+  server.registerTool(
     "bridge_send_message",
     {
       title: "Send to one or more bridge endpoints",
       description: "Route one message to explicit endpoint IDs while preserving source, conversation, reply provenance, TTL, and hop history.",
       inputSchema: {
-        to:z.array(z.string().min(1).max(128)).min(1).max(32),
+        to:z.array(z.string().min(1).max(128)).max(32).default([]),
+        room_id:z.string().min(1).max(128).nullable().optional(),
         conversation_id:z.string().min(1).max(128),
         text:z.string().min(1).max(MAX_SUBMIT_TEXT_CHARACTERS),
         in_reply_to:z.string().uuid().nullable().optional(),
@@ -346,7 +377,7 @@ export function createRosyTalkMcpServer(
       outputSchema: { message:z.object({}).passthrough() },
       annotations: submitAnnotations,
     },
-    async ({to,conversation_id,text,in_reply_to}) => textAndStructured({ message:router.send({to,conversationId:conversation_id,text,inReplyTo:in_reply_to}) }),
+    async ({to,room_id,conversation_id,text,in_reply_to}) => textAndStructured(router.send({to,roomId:room_id,conversationId:conversation_id,text,inReplyTo:in_reply_to})),
   );
 
   return server;
