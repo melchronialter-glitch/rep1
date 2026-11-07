@@ -2,25 +2,11 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import WebSocket from "ws";
 import { EndpointRouter } from "../src/endpoint-router.js";
-
-function fakeSocket(){
- const sent:string[]=[];
- const handlers=new Map<string,Function[]>();
- const s:any={readyState:WebSocket.OPEN,send:(x:string)=>sent.push(x),close:()=>{},on:(n:string,f:Function)=>handlers.set(n,[...(handlers.get(n)??[]),f])};
- return {socket:s as WebSocket,sent,emit:(n:string,x?:unknown)=>{for(const f of handlers.get(n)??[])f(x);}};
-}
-test("router preserves distinct endpoint identity and reports unavailable targets",()=>{
- const r=new EndpointRouter(); const a=fakeSocket(),b=fakeSocket();
- r.attach(a.socket);r.attach(b.socket);
- a.emit("message",Buffer.from(JSON.stringify({type:"endpoint.hello",endpointId:"a",label:"A",kind:"ai",capabilities:{receive:true,send:true}})));
- b.emit("message",Buffer.from(JSON.stringify({type:"endpoint.hello",endpointId:"b",label:"B",kind:"ai",capabilities:{receive:true,send:true}})));
- a.emit("message",Buffer.from(JSON.stringify({type:"route.message",messageId:"00000000-0000-4000-8000-000000000001",conversationId:"c",from:"a",to:["b","missing"],text:"x",inReplyTo:null,createdAt:new Date().toISOString(),ttl:8,hops:[]})));
- const delivered=JSON.parse(b.sent.at(-1)!); assert.equal(delivered.from,"a");assert.deepEqual(delivered.hops,["a","aster-router"]);
- const result=JSON.parse(a.sent.at(-1)!);assert.deepEqual(result.delivered,["b"]);assert.deepEqual(result.unavailable,["missing"]);
-});
-test("receive-only endpoint cannot send",()=>{
- const r=new EndpointRouter();const a=fakeSocket();r.attach(a.socket);
- a.emit("message",Buffer.from(JSON.stringify({type:"endpoint.hello",endpointId:"a",label:"A",kind:"ai",capabilities:{receive:true,send:false}})));
- a.emit("message",Buffer.from(JSON.stringify({type:"route.message",messageId:"00000000-0000-4000-8000-000000000002",conversationId:"c",from:"a",to:["x"],text:"x",inReplyTo:null,createdAt:new Date().toISOString(),ttl:8,hops:[]})));
- assert.match(JSON.parse(a.sent.at(-1)!).message,/receive-only/);
-});
+function fakeSocket(){const sent:string[]=[];const handlers=new Map<string,Function[]>();const s:any={readyState:WebSocket.OPEN,send:(x:string)=>sent.push(x),close:()=>{},on:(n:string,f:Function)=>handlers.set(n,[...(handlers.get(n)??[]),f])};return{socket:s as WebSocket,sent,emit:(n:string,x?:unknown)=>{for(const f of handlers.get(n)??[])f(x);}};}
+function hello(x:ReturnType<typeof fakeSocket>,id:string,send=true){x.emit("message",Buffer.from(JSON.stringify({type:"endpoint.hello",endpointId:id,label:id,kind:"ai",capabilities:{receive:true,send}})));}
+function msg(from:string,to:string[]=[],roomId:string|null=null){return{type:"route.message",messageId:crypto.randomUUID(),conversationId:"c",from,to,roomId,text:"x",inReplyTo:null,causalParents:[],stimulusId:null,createdAt:new Date().toISOString(),ttl:8,hops:[]};}
+test("room speech circulates to peers while preserving identity",()=>{const r=new EndpointRouter(),a=fakeSocket(),b=fakeSocket(),c=fakeSocket();r.attach(a.socket);r.attach(b.socket);r.attach(c.socket);hello(a,"a");hello(b,"b");hello(c,"c");r.createRoom("room",["a","b","c"]);a.emit("message",Buffer.from(JSON.stringify(msg("a",[],"room"))));for(const x of[b,c]){const m=JSON.parse(x.sent.at(-1)!);assert.equal(m.from,"a");assert.equal(m.roomId,"room");assert.deepEqual(m.hops,["a","aster-router"]);}});
+test("room membership survives endpoint disconnect",()=>{const r=new EndpointRouter(),a=fakeSocket();r.attach(a.socket);hello(a,"a");r.createRoom("room",["a"]);a.emit("close");assert.deepEqual(r.listRooms()[0].members,["a"]);});
+test("receive-only endpoint cannot speak",()=>{const r=new EndpointRouter(),a=fakeSocket();r.attach(a.socket);hello(a,"a",false);a.emit("message",Buffer.from(JSON.stringify(msg("a",["x"]))));assert.match(JSON.parse(a.sent.at(-1)!).message,/receive-only/);});
+test("invariant stimulus shares stimulus id but preserves separate edges",()=>{const r=new EndpointRouter(),a=fakeSocket(),b=fakeSocket();r.attach(a.socket);r.attach(b.socket);hello(a,"a");hello(b,"b");r.createRoom("room",["a","b"]);const x=r.inject({roomId:"room",conversationId:"exp",text:"same"});assert.equal(x.targets.length,2);const ma=JSON.parse(a.sent.at(-1)!),mb=JSON.parse(b.sent.at(-1)!);assert.equal(ma.stimulusId,mb.stimulusId);assert.notEqual(ma.messageId,mb.messageId);});
+test("endpoint cannot forge its identity",()=>{const r=new EndpointRouter(),a=fakeSocket();r.attach(a.socket);hello(a,"a");a.emit("message",Buffer.from(JSON.stringify(msg("b",["x"]))));assert.match(JSON.parse(a.sent.at(-1)!).message,/forged/);});
