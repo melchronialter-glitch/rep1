@@ -13,6 +13,7 @@ import {
 } from "./protocol.js";
 import { PhoneBroker, RosyTalkBridgeError } from "./phone-broker.js";
 import type { LineageStore } from "./lineage.js";
+import type { EndpointRouter } from "./endpoint-router.js";
 
 const readOnlyAnnotations = {
   readOnlyHint: true,
@@ -53,6 +54,7 @@ function toolError(error: unknown) {
 export function createRosyTalkMcpServer(
   broker: PhoneBroker,
   lineage: LineageStore,
+  router: EndpointRouter,
 ): McpServer {
   const server = new McpServer(
     { name: "aster-android-rosytalk", version: "0.4.0" },
@@ -303,6 +305,48 @@ export function createRosyTalkMcpServer(
         return toolError(error);
       }
     },
+  );
+
+
+  server.registerTool(
+    "bridge_list_endpoints",
+    {
+      title: "List connected bridge endpoints",
+      description: "List currently connected laptop, parallel-thread, AI, and custom adapters with explicit identities.",
+      inputSchema: {},
+      outputSchema: { endpoints: z.array(z.object({ type:z.literal("endpoint.hello"), endpointId:z.string(), label:z.string(), kind:z.enum(["chatgpt_thread","ai","laptop","custom"]), capabilities:z.object({receive:z.boolean(),send:z.boolean()}), connectedAt:z.string() })) },
+      annotations: readOnlyAnnotations,
+    },
+    async () => textAndStructured({ endpoints: router.list() }),
+  );
+
+  server.registerTool(
+    "bridge_read_messages",
+    {
+      title: "Read routed bridge messages",
+      description: "Read bounded routed-message history without collapsing endpoint identities.",
+      inputSchema: { conversation_id:z.string().min(1).max(128).optional(), limit:z.number().int().min(1).max(500).default(100) },
+      outputSchema: { messages:z.array(z.object({}).passthrough()) },
+      annotations: readOnlyAnnotations,
+    },
+    async ({conversation_id,limit}) => textAndStructured({ messages: router.history(conversation_id,limit) }),
+  );
+
+  server.registerTool(
+    "bridge_send_message",
+    {
+      title: "Send to one or more bridge endpoints",
+      description: "Route one message to explicit endpoint IDs while preserving source, conversation, reply provenance, TTL, and hop history.",
+      inputSchema: {
+        to:z.array(z.string().min(1).max(128)).min(1).max(32),
+        conversation_id:z.string().min(1).max(128),
+        text:z.string().min(1).max(MAX_SUBMIT_TEXT_CHARACTERS),
+        in_reply_to:z.string().uuid().nullable().optional(),
+      },
+      outputSchema: { message:z.object({}).passthrough() },
+      annotations: submitAnnotations,
+    },
+    async ({to,conversation_id,text,in_reply_to}) => textAndStructured({ message:router.send({to,conversationId:conversation_id,text,inReplyTo:in_reply_to}) }),
   );
 
   return server;
