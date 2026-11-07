@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import WebSocket from "ws";
 
 const relay = process.env.ASTER_RELAY_WS ?? "ws://127.0.0.1:8787/endpoint";
@@ -22,7 +23,7 @@ process.stdin.on("data", chunk => {
     const input=JSON.parse(line);
     ws.send(JSON.stringify({
       type:"route.message",
-      messageId:input.messageId ?? crypto.randomUUID(),
+      messageId:input.messageId ?? randomUUID(),
       conversationId:input.conversationId ?? "default",
       from:endpointId,
       to:input.to,
